@@ -56,3 +56,32 @@ impl<F: Field> AndOperation<F> {
         }
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for AndOperation<p3_koala_bear::KoalaBear> {
+    type Input = ([u32; 2], bool);
+    type Result = u32;
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(&mut vec![], input[0], input[1]))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(input[0] & input[1])
+    }
+
+    fn check(&self, ([a, b], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            Word::from(*b),
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}

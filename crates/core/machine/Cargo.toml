@@ -9,6 +9,13 @@ repository = { workspace = true }
 keywords = { workspace = true }
 categories = { workspace = true }
 
+[[bin]]
+name = "zkm-core-machine-fuzz-target"
+path = "src/bin/fuzz-target.rs"
+test = false
+bench = false
+required-features = ["fuzzing"]
+
 [dependencies]
 bincode = "1.3.3"
 serde = { workspace = true, features = ["derive", "rc"] }
@@ -62,6 +69,11 @@ static_assertions = "1.1.0"
 
 zkm-stark = { workspace = true }
 
+# fuzzing 
+afl = { version = "0.17", optional = true }
+clap = {version = "4.5", optional = true, features = ["derive"]}
+arbitrary = { version = "1", optional = true, features = ["derive"] }
+
 [dev-dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 criterion = "0.5.1"
@@ -70,8 +82,10 @@ rand = "0.8.5"
 test-artifacts = { workspace = true }
 
 [features]
+default = ["fuzzing"]
 debug = []
 bigint-rug = ["zkm-curves/bigint-rug"]
+fuzzing = ["afl", "clap", "arbitrary"]
 
 [lib]
 bench = false

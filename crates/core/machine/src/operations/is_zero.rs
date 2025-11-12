@@ -65,3 +65,32 @@ impl<F: Field> IsZeroOperation<F> {
         builder.when(is_real.clone()).when(cols.result).assert_zero(a.clone());
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for IsZeroOperation<p3_koala_bear::KoalaBear> {
+    type Input = (u32, bool);
+    type Result = u32;
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(*input))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue((*input == 0) as u32)
+    }
+
+    fn check(&self, (a, is_real): &Self::Input) {
+        use p3_field::FieldAlgebra;
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            p3_koala_bear::KoalaBear::from_canonical_u32(*a),
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}

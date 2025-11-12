@@ -50,3 +50,32 @@ impl<F: Field> NotOperation<F> {
         }
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for NotOperation<p3_koala_bear::KoalaBear> {
+    type Input = (u32, bool);
+    type Result = u32;
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(&mut vec![], *input))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(!(*input))
+    }
+
+    fn check(&self, (a, is_real): &Self::Input) {
+        use p3_field::FieldAlgebra;
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}

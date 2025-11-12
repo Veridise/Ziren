@@ -9,6 +9,13 @@ repository = { workspace = true }
 keywords = { workspace = true }
 categories = { workspace = true }
 
+[[bin]]
+name = "zkm-core-executor-fuzz-target"
+path = "src/bin/fuzz-target.rs"
+test = false
+bench = false
+required-features = ["fuzzing"]
+
 [dependencies]
 zkm-primitives = { workspace = true }
 zkm-curves = { workspace = true }
@@ -50,6 +57,10 @@ anyhow = { workspace = true }
 tracing-subscriber = "0.3.19"
 env_logger = "0.11.6"
 
+# fuzzing 
+afl = { version = "0.17", optional = true }
+clap = {version = "4.5", optional = true, features = ["derive"]}
+
 [dev-dependencies]
 zkm-zkvm = { workspace = true }
 zkm-lib = { workspace = true }
@@ -57,3 +68,4 @@ test-artifacts = { path = "../../test-artifacts" }
 
 [features]
 bigint-rug = ["zkm-curves/bigint-rug"]
+fuzzing = ["afl", "clap"]

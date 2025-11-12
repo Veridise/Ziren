@@ -206,3 +206,23 @@ impl<F: Field> GlobalLookupOperation<F> {
         );
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl<'a> arbitrary::Arbitrary<'a> for GlobalLookupOperation<p3_koala_bear::KoalaBear> {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            offset_bits: <[u32; 8]>::arbitrary(u)?
+                .map(p3_koala_bear::KoalaBear::from_canonical_u32),
+            x_coordinate: SepticBlock(
+                <[u32; 7]>::arbitrary(u)?.map(p3_koala_bear::KoalaBear::from_canonical_u32),
+            ),
+            y_coordinate: SepticBlock(
+                <[u32; 7]>::arbitrary(u)?.map(p3_koala_bear::KoalaBear::from_canonical_u32),
+            ),
+            y6_bit_decomp: <[u32; 30]>::arbitrary(u)?
+                .map(p3_koala_bear::KoalaBear::from_canonical_u32),
+            range_check_witness: p3_koala_bear::KoalaBear::from_canonical_u32(u32::arbitrary(u)?),
+            permutation: Poseidon2Operation::arbitrary(u)?,
+        })
+    }
+}

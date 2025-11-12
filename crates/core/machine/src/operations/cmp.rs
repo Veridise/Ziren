@@ -137,6 +137,35 @@ impl<F: Field> GtColsBytes<F> {
     }
 }
 
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for GtColsBytes<p3_koala_bear::KoalaBear> {
+    type Input = ([u32; 2], bool);
+    type Result = ();
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, ([a, b], _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        std::ops::ControlFlow::Continue(self.populate(*a, *b, &mut vec![]))
+    }
+
+    fn oracle(_: &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn check(&self, ([a, b], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            Word::from(*b),
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+            *self,
+        )
+    }
+}
+
 /// Operation columns for verifying that an element is within the range `[0, modulus)`.
 #[derive(Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
@@ -255,6 +284,53 @@ impl<V: Copy, const N: usize> AssertLtColsBytes<V, N> {
     }
 }
 
+#[cfg(feature = "fuzzing")]
+impl<const N: usize> crate::fuzzing::DiffFuzzingTarget
+    for AssertLtColsBytes<p3_koala_bear::KoalaBear, N>
+{
+    type Input = ([Vec<u8>; 2], bool);
+    type Result = ();
+
+    fn create() -> Self {
+        Self {
+            byte_flags: std::array::from_fn(|_| Default::default()),
+            a_comparison_byte: Default::default(),
+            b_comparison_byte: Default::default(),
+        }
+    }
+
+    fn fuzz(&mut self, ([a, b], _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        std::ops::ControlFlow::Continue(self.populate(&mut vec![], &a, &b))
+    }
+
+    fn oracle(([a, b], _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        // Ignore cases where a is greater than b because it will crass in the call to populate.
+        for (a, b) in std::iter::zip(a.iter().rev(), b.iter().rev()) {
+            if a > b {
+                return std::ops::ControlFlow::Break(());
+            }
+            if a < b {
+                break;
+            }
+        }
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn check(&self, ([a, b], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        let a =
+            a.iter().copied().map(p3_koala_bear::KoalaBear::from_canonical_u8).collect::<Vec<_>>();
+        let b =
+            b.iter().copied().map(p3_koala_bear::KoalaBear::from_canonical_u8).collect::<Vec<_>>();
+        self.eval(
+            &mut builder,
+            &a,
+            &b,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}
+
 /// Operation columns for verifying that an element is within the range `[0, modulus)`.
 #[derive(Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
@@ -351,5 +427,49 @@ impl<V: Copy, const N: usize> AssertLtColsBits<V, N> {
 
         builder.when(is_real.clone()).assert_eq(a_comparison_bit, AB::F::ZERO);
         builder.when(is_real.clone()).assert_eq(b_comparison_bit, AB::F::ONE);
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+impl<const N: usize> crate::fuzzing::DiffFuzzingTarget
+    for AssertLtColsBits<p3_koala_bear::KoalaBear, N>
+{
+    type Input = ([Vec<u32>; 2], bool);
+    type Result = ();
+
+    fn create() -> Self {
+        Self { bit_flags: std::array::from_fn(|_| Default::default()) }
+    }
+
+    fn fuzz(&mut self, ([a, b], _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        std::ops::ControlFlow::Continue(self.populate(&a, &b))
+    }
+
+    fn oracle(([a, b], _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        // Ignore cases where a is greater than b because it will crass in the call to populate.
+        for (a, b) in std::iter::zip(a.iter().rev(), b.iter().rev()) {
+            if a > b {
+                return std::ops::ControlFlow::Break(());
+            }
+            if a < b {
+                break;
+            }
+        }
+
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn check(&self, ([a, b], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        let a =
+            a.iter().copied().map(p3_koala_bear::KoalaBear::from_canonical_u32).collect::<Vec<_>>();
+        let b =
+            b.iter().copied().map(p3_koala_bear::KoalaBear::from_canonical_u32).collect::<Vec<_>>();
+        self.eval(
+            &mut builder,
+            &a,
+            &b,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
     }
 }

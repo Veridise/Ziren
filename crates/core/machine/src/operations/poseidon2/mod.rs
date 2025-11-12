@@ -30,3 +30,10 @@ pub struct Poseidon2Operation<T: Copy> {
     /// The permutation.
     pub permutation: Poseidon2Degree3Cols<T>,
 }
+
+#[cfg(feature = "fuzzing")]
+impl<'a> arbitrary::Arbitrary<'a> for Poseidon2Operation<p3_koala_bear::KoalaBear> {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self { permutation: todo!() })
+    }
+}

@@ -152,3 +152,34 @@ impl<F: Field> AddDoubleOperation<F> {
         }
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for AddDoubleOperation<p3_koala_bear::KoalaBear> {
+    type Input = ([u64; 2], bool);
+    type Result = u64;
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u64> {
+        std::ops::ControlFlow::Continue(self.populate(&mut vec![], input[0], input[1]))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u64> {
+        std::ops::ControlFlow::Continue(input[0].wrapping_add(input[1]))
+    }
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn check(&self, ([a, b], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from((*a) as u32),
+            Word::from((*a >> 32) as u32),
+            Word::from((*b) as u32),
+            Word::from((*b >> 32) as u32),
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}

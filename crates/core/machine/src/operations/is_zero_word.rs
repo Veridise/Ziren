@@ -81,3 +81,32 @@ impl<F: Field> IsZeroWordOperation<F> {
         builder_is_real.assert_eq(cols.result, cols.is_lower_half_zero * cols.is_upper_half_zero);
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for IsZeroWordOperation<p3_koala_bear::KoalaBear> {
+    type Input = (u32, bool);
+    type Result = u32;
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(*input))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue((*input == 0) as u32)
+    }
+
+    fn check(&self, (a, is_real): &Self::Input) {
+        use p3_field::FieldAlgebra;
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}

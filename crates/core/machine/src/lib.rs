@@ -19,6 +19,8 @@ pub mod alu;
 pub mod bytes;
 pub mod control_flow;
 pub mod cpu;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 pub mod global;
 pub mod io;
 pub mod memory;

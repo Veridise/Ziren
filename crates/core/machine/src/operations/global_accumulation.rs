@@ -222,3 +222,36 @@ impl<F: Field, const N: usize> GlobalAccumulationOperation<F, N> {
         builder.when_transition().assert_septic_ext_eq(final_digest.y, next_initial_digest.y);
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl<const N: usize> crate::fuzzing::DiffFuzzingTarget
+    for GlobalAccumulationOperation<p3_koala_bear::KoalaBear, N>
+{
+    type Input = (u32, usize, [[bool; N]; 2]);
+    type Result = ();
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (i, rot, _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        todo!()
+        //std::ops::ControlFlow::Continue(self.populate(&mut vec![], *i, *rot))
+    }
+
+    fn oracle((i, rot, _): &Self::Input) -> std::ops::ControlFlow<(), ()> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn check(&self, (a, b, [local_is_real, next_is_real]): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval_accumulation(
+            &mut builder,
+            todo!(),
+            (*local_is_real).map(u8::from).map(p3_koala_bear::KoalaBear::from_canonical_u8),
+            (*next_is_real).map(u8::from).map(p3_koala_bear::KoalaBear::from_canonical_u8),
+            todo!(),
+            todo!(),
+        )
+    }
+}

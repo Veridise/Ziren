@@ -147,3 +147,42 @@ impl<F: Field> Add4Operation<F> {
         }
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for Add4Operation<p3_koala_bear::KoalaBear> {
+    type Input = ([u32; 4], bool);
+    type Result = u32;
+
+    fn fuzz(&mut self, (input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(
+            &mut vec![],
+            input[0],
+            input[1],
+            input[2],
+            input[3],
+        ))
+    }
+
+    fn oracle((input, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(
+            input[0].wrapping_add(input[1]).wrapping_add(input[2]).wrapping_add(input[3]),
+        )
+    }
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn check(&self, ([a, b, c, d], is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            Word::from(*b),
+            Word::from(*c),
+            Word::from(*d),
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+            *self,
+        )
+    }
+}

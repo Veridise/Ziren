@@ -138,3 +138,32 @@ impl<F: Field> FixedShiftRightOperation<F> {
         builder.assert_eq(cols.value[WORD_SIZE - 1], first_shift);
     }
 }
+
+#[cfg(feature = "fuzzing")]
+impl crate::fuzzing::DiffFuzzingTarget for FixedShiftRightOperation<p3_koala_bear::KoalaBear> {
+    type Input = (u32, usize, bool);
+    type Result = u32;
+
+    fn create() -> Self {
+        Self::default()
+    }
+
+    fn fuzz(&mut self, (i, rot, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(self.populate(&mut vec![], *i, *rot))
+    }
+
+    fn oracle((i, rot, _): &Self::Input) -> std::ops::ControlFlow<(), u32> {
+        std::ops::ControlFlow::Continue(i >> (*rot))
+    }
+
+    fn check(&self, (a, b, is_real): &Self::Input) {
+        let mut builder = crate::fuzzing::FuzzingAirBuilder::default();
+        Self::eval(
+            &mut builder,
+            Word::from(*a),
+            *b,
+            *self,
+            p3_koala_bear::KoalaBear::from_canonical_u8((*is_real) as u8),
+        )
+    }
+}
