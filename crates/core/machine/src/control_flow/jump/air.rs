@@ -39,27 +39,27 @@ where
         // SAFETY: This checks the following.
         // - `num_extra_cycles = 0`
         // - `op_a_immutable = 0`
-        // - `is_memory = 0`
+        // - `is_rw_a = 0`
         // - `is_syscall = 0`
         // - `is_halt = 0`
         // `next_pc` and `op_a_value` still has to be constrained, and this is done below.
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc.reduce::<AB>(),
-            AB::Expr::ZERO,
+            local.next_next_pc.reduce::<AB>(),
+            AB::Expr::zero(),
             opcode,
             local.op_a_value,
             local.op_b_value,
             local.op_c_value,
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             is_real.clone(),
         );
 
@@ -69,7 +69,7 @@ where
             local.next_pc.reduce::<AB>() + AB::F::from_canonical_u32(4),
         );
 
-        // Range check op_a, pc, and next_pc.
+        // Range check op_a, next_pc, and next_next_pc.
         // SAFETY: `is_real` is already checked to be boolean.
         // `op_a_value` is checked to be a valid word, as it matches the one in the CpuChip.
         // In the CpuChip's `eval_registers`, it's checked that this is valid word saved in op_a when `op_a_0 = 0`

@@ -1,5 +1,4 @@
-//! The air module contains the AIR constraints for the poseidon2 chip.
-//! At the moment, we're only including memory constraints to test the new memory argument.
+//! The air module contains the AIR constraints for the Poseidon2 wide chip.
 
 use std::{array, borrow::Borrow};
 
@@ -12,7 +11,7 @@ use crate::builder::ZKMRecursionAirBuilder;
 
 use super::{
     columns::{
-        permutation::Poseidon2, preprocessed::Poseidon2PreprocessedCols,
+        permutation::Poseidon2, preprocessed::Poseidon2PreprocessedColsWide,
         NUM_POSEIDON2_DEGREE3_COLS, NUM_POSEIDON2_DEGREE9_COLS,
     },
     external_linear_layer, internal_linear_layer, Poseidon2WideChip, NUM_EXTERNAL_ROUNDS,
@@ -41,7 +40,7 @@ where
         let prepr = builder.preprocessed();
         let local_row = Self::convert::<AB::Var>(main.row_slice(0));
         let prep_local = prepr.row_slice(0);
-        let prep_local: &Poseidon2PreprocessedCols<_> = (*prep_local).borrow();
+        let prep_local: &Poseidon2PreprocessedColsWide<_> = (*prep_local).borrow();
 
         // Dummy constraints to normalize to DEGREE.
         let lhs = (0..DEGREE)
@@ -52,7 +51,7 @@ where
             .product::<AB::Expr>();
         builder.assert_eq(lhs, rhs);
 
-        // For now, include only memory constraints.
+        // Enforce the memory argument for input and output words.
         (0..WIDTH).for_each(|i| {
             builder.send_single(
                 prep_local.input[i],
@@ -106,7 +105,7 @@ impl<const DEGREE: usize> Poseidon2WideChip<DEGREE> {
         // Apply the sboxes.
         // See `populate_external_round` for why we don't have columns for the sbox output here.
         // let mut sbox_deg_7: [AB::Expr; WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
-        let mut sbox_deg_3: [AB::Expr; WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
+        let mut sbox_deg_3: [AB::Expr; WIDTH] = core::array::from_fn(|_| AB::Expr::zero());
         for i in 0..WIDTH {
             let calculated_sbox_deg_3 = add_rc[i].clone() * add_rc[i].clone() * add_rc[i].clone();
 

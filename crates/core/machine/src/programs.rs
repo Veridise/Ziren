@@ -6,8 +6,9 @@ pub mod tests {
     use zkm_core_executor::{Instruction, Opcode, Program};
 
     use test_artifacts::{
-        FIBONACCI_ELF, HELLO_WORLD_ELF, KECCAK_SPONGE_ELF, PANIC_ELF, SECP256R1_ADD_ELF,
-        SECP256R1_DOUBLE_ELF, SHA3_CHAIN_ELF, U256XU2048_MUL_ELF, UNCONSTRAINED_ELF,
+        FIBONACCI_ELF, HELLO_WORLD_ELF, KECCAK_SPONGE_ELF, MAX_MEMORY_ELF, PANIC_ELF,
+        SECP256R1_ADD_ELF, SECP256R1_DOUBLE_ELF, SHA3_CHAIN_ELF, U256XU2048_MUL_ELF,
+        UNCONSTRAINED_ELF,
     };
 
     #[must_use]
@@ -28,6 +29,16 @@ pub mod tests {
     #[must_use]
     pub fn fibonacci_program() -> Program {
         Program::from(FIBONACCI_ELF).unwrap()
+    }
+
+    /// Get the max_memory program.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the program fails to load.
+    #[must_use]
+    pub fn max_memory_program() -> Program {
+        Program::from(MAX_MEMORY_ELF).unwrap()
     }
 
     /// Get the hello world program.
@@ -158,7 +169,7 @@ pub mod tests {
     pub fn other_memory_program() -> Program {
         let instructions = vec![
             Instruction::new(Opcode::ADD, 29, 0, (1 << 20) + (1 << 15) + (1 << 6) - 1, false, true),
-            Instruction::new(Opcode::ADD, 27, 0, 25, false, true),
+            Instruction::new(Opcode::ADD, 27, 0, 3325, false, true),
             Instruction::new(
                 Opcode::ADD,
                 25,
@@ -168,8 +179,8 @@ pub mod tests {
                 true,
             ),
             Instruction::new(Opcode::ADD, 17, 0, 0x43627530, false, true),
-            Instruction::new(Opcode::ADD, 22, 0, 22, false, true),
-            Instruction::new(Opcode::ADD, 10, 0, 15, false, true),
+            Instruction::new(Opcode::ADD, 22, 0, 80, false, true),
+            Instruction::new(Opcode::ADD, 10, 0, 100, false, true),
             Instruction::new(Opcode::LWR, 29, 27, 1, false, true),
             Instruction::new(Opcode::LWL, 29, 27, 1, false, true),
             Instruction::new(Opcode::LL, 29, 27, 3, false, true),

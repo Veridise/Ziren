@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// This object encapsulated the information needed to prove an ALU operation. This includes its
 /// shard, opcode, operands, and other relevant information.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
 pub struct AluEvent {
     pub pc: u32,
     pub next_pc: u32,
@@ -71,7 +72,7 @@ pub struct CompAluEvent {
 }
 
 impl CompAluEvent {
-    /// Create a new [`AluEvent`].
+    /// Create a new [`CompAluEvent`].
     #[must_use]
     pub fn new(pc: u32, opcode: Opcode, a: u32, b: u32, c: u32) -> Self {
         Self {
@@ -130,7 +131,7 @@ pub struct MemInstrEvent {
     /// The memory access record for memory operations.
     pub mem_access: MemoryRecordEnum,
     /// The memory access record for memory operations.
-    pub op_a_access: MemoryRecordEnum,
+    pub prev_a_val: u32,
 }
 
 impl MemInstrEvent {
@@ -147,9 +148,9 @@ impl MemInstrEvent {
         b: u32,
         c: u32,
         mem_access: MemoryRecordEnum,
-        op_a_access: MemoryRecordEnum,
+        prev_a_val: u32,
     ) -> Self {
-        Self { shard, clk, pc, next_pc, opcode, a, b, c, mem_access, op_a_access }
+        Self { shard, clk, pc, next_pc, opcode, a, b, c, mem_access, prev_a_val }
     }
 }
 
@@ -246,8 +247,6 @@ pub struct MiscEvent {
     pub next_pc: u32,
     /// The opcode.
     pub opcode: Opcode,
-    /// The register id for first operand value.
-    pub op_a: u8,
     /// The first operand value.
     pub a: u32,
     /// The second operand value.
@@ -270,13 +269,42 @@ impl MiscEvent {
         pc: u32,
         next_pc: u32,
         opcode: Opcode,
-        op_a: u8,
         a: u32,
         b: u32,
         c: u32,
         prev_a: u32,
         hi_record: MemoryWriteRecord,
     ) -> Self {
-        Self { clk, shard, pc, next_pc, opcode, op_a, a, b, c, prev_a, hi_record }
+        Self { clk, shard, pc, next_pc, opcode, a, b, c, prev_a, hi_record }
+    }
+}
+
+/// Misc Instruction Event.
+///
+/// This object encapsulated the information needed to prove a MIPS MovCond and WSBH operation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
+pub struct MovCondEvent {
+    /// The program counter.
+    pub pc: u32,
+    pub next_pc: u32,
+    /// The opcode.
+    pub opcode: Opcode,
+    /// The first operand value.
+    pub a: u32,
+    /// The second operand value.
+    pub b: u32,
+    /// The third operand value.
+    pub c: u32,
+    /// The third operand value.
+    pub prev_a: u32,
+}
+
+impl MovCondEvent {
+    /// Create a new [`MovCondEvent`].
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(pc: u32, next_pc: u32, opcode: Opcode, a: u32, b: u32, c: u32, prev_a: u32) -> Self {
+        Self { pc, next_pc, opcode, a, b, c, prev_a }
     }
 }

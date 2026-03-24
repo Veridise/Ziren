@@ -20,7 +20,7 @@ use super::{BranchChip, BranchColumns};
 ///    boolean that indicates whether the branch condition is true.
 /// 2. It verifies the correct value of branching based on the helper bool columns (a_eq_b,
 ///    a_gt_b, a_lt_b).
-/// 3. It verifier the correct values of the helper bool columns based on op_a and op_b.
+/// 3. It verifies the correct values of the helper bool columns based on op_a and op_b.
 ///
 impl<AB> Air<AB> for BranchChip
 where
@@ -61,27 +61,27 @@ where
         // - `num_extra_cycles = 0`
         // - `op_a_val` will be constrained in the BranchChip as `op_a_immutable = 1`
         // - `op_a_immutable = 1`, as this is a branch instruction
-        // - `is_memory = 0`
+        // - `is_rw_a = 0`
         // - `is_syscall = 0`
         // - `is_halt = 0`
         // `next_pc` still has to be constrained, and this is done below.
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc.reduce::<AB>(),
-            AB::Expr::ZERO,
+            local.next_next_pc.reduce::<AB>(),
+            AB::Expr::zero(),
             opcode,
             local.op_a_value,
             local.op_b_value,
             local.op_c_value,
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ONE,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::one(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             is_real.clone(),
         );
 
@@ -120,6 +120,12 @@ where
                 local.next_pc.reduce::<AB>() + AB::Expr::from_canonical_u32(4),
                 local.next_next_pc.reduce::<AB>(),
             );
+
+            // check local.next_pc/next_next_pc to be valid word when we are not branching.
+            // they are checked as valid value by the ADD ALU table when we are branching.
+            builder.slice_range_check_u8(&local.next_pc.0, is_real.clone() - local.is_branching);
+            builder
+                .slice_range_check_u8(&local.next_next_pc.0, is_real.clone() - local.is_branching);
 
             // When we are branching, assert that local.next_next_pc <==> next.target_pc.
             builder

@@ -44,15 +44,16 @@ use zkm_core_executor::{
     events::{ByteLookupEvent, ByteRecord, CompAluEvent, MemoryAccessPosition, MemoryRecordEnum},
     ByteOpcode, ExecutionRecord, Opcode, Program,
 };
-use zkm_derive::AlignedBorrow;
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
 use zkm_primitives::consts::WORD_SIZE;
-use zkm_stark::{air::MachineAir, Word};
+use zkm_stark::{air::MachineAir, PicusInfo, Word};
 
 use crate::{
     air::{WordAirBuilder, ZKMCoreAirBuilder},
     alu::mul::utils::get_msb,
     memory::{MemoryCols, MemoryReadWriteCols},
     utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
 };
 
 /// The number of main trace columns for `MulChip`.
@@ -73,10 +74,11 @@ const BYTE_MASK: u8 = 0xff;
 pub struct MulChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Debug, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MulCols<T> {
     /// The current/next pc, used for instruction lookup table.
+    #[picus(input)]
     pub pc: T,
     pub next_pc: T,
 
@@ -111,15 +113,17 @@ pub struct MulCols<T> {
     pub c_sign_extend: T,
 
     /// Flag indicating whether the opcode is `MUL`.
+    #[picus(selector)]
     pub is_mul: T,
 
     /// Flag indicating whether the opcode is `MULT`.
+    #[picus(selector)]
     pub is_mult: T,
 
     /// Flag indicating whether the opcode is `MULTU`.
+    #[picus(selector)]
     pub is_multu: T,
 
-    /// Selector to know whether this row is enabled.
     pub is_real: T,
 
     /// Access to hi register
@@ -139,15 +143,21 @@ impl<F: PrimeField32> MachineAir<F> for MulChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "Mul".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        MulCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         _: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Generate the trace rows for each event.
         let nb_rows = input.mul_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -172,10 +182,14 @@ impl<F: PrimeField32> MachineAir<F> for MulChip {
 
         // Convert the trace to a row major matrix.
 
-        RowMajorMatrix::new(values, NUM_MUL_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_MUL_COLS))
     }
 
-    fn generate_dependencies(&self, input: &Self::Record, output: &mut Self::Record) {
+    fn generate_dependencies(
+        &self,
+        input: &Self::Record,
+        output: &mut Self::Record,
+    ) -> Result<(), Self::Error> {
         let chunk_size = std::cmp::max(input.mul_events.len() / num_cpus::get(), 1);
 
         let blu_batches = input
@@ -193,6 +207,7 @@ impl<F: PrimeField32> MachineAir<F> for MulChip {
             .collect::<Vec<_>>();
 
         output.add_byte_lookup_events_from_maps(blu_batches.iter().collect::<Vec<_>>());
+        Ok(())
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -387,11 +402,11 @@ where
         let product = {
             for i in 0..PRODUCT_SIZE {
                 if i == 0 {
-                    builder.assert_eq(local.product[i], m[i].clone() - local.carry[i] * base);
+                    builder.assert_eq(m[i].clone(), local.carry[i] * base + local.product[i]);
                 } else {
                     builder.assert_eq(
-                        local.product[i],
-                        m[i].clone() + local.carry[i - 1] - local.carry[i] * base,
+                        local.product[i] - local.carry[i - 1] + local.carry[i] * base,
+                        m[i].clone(),
                     );
                 }
             }
@@ -456,18 +471,18 @@ where
             local.clk,
             local.pc,
             local.next_pc,
-            AB::Expr::ZERO,
+            local.next_pc + AB::Expr::from_canonical_u32(4),
+            AB::Expr::zero(),
             opcode,
             local.a,
             local.b,
             local.c,
             local.hi,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.hi_record_is_real,
-            AB::Expr::ZERO,
-            AB::Expr::ONE,
+            AB::Expr::zero(),
+            AB::Expr::one(),
             local.is_real,
         );
 
@@ -487,6 +502,7 @@ where
         builder.when(local.hi_record_is_real).assert_word_eq(local.hi, *local.op_hi_access.value());
         builder.when_not(local.hi_record_is_real).assert_zero(local.clk);
         builder.when_not(local.hi_record_is_real).assert_zero(local.shard);
+        builder.when(local.is_mul).assert_word_zero(local.hi);
     }
 }
 
@@ -515,7 +531,7 @@ mod tests {
         shard.mul_events = mul_events;
         let chip = MulChip::default();
         let _trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
     }
 
     #[test]
@@ -554,7 +570,7 @@ mod tests {
         shard.mul_events = mul_events;
         let chip = MulChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         let proof = prove::<KoalaBearPoseidon2, _>(&config, &chip, &mut challenger, trace);
 
         let mut challenger = config.challenger();

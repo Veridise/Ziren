@@ -5,6 +5,7 @@ use zkm_curves::{CurveType, EllipticCurve};
 use crate::{
     events::{create_ec_add_event, PrecompileEvent},
     syscalls::{Syscall, SyscallCode, SyscallContext},
+    ExecutionError,
 };
 
 pub(crate) struct WeierstrassAddAssignSyscall<E: EllipticCurve> {
@@ -25,7 +26,7 @@ impl<E: EllipticCurve> Syscall for WeierstrassAddAssignSyscall<E> {
         syscall_code: SyscallCode,
         arg1: u32,
         arg2: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let event = create_ec_add_event::<E>(rt, arg1, arg2);
         let syscall_event =
             rt.rt.syscall_event(event.clk, None, rt.next_pc, syscall_code.syscall_id(), arg1, arg2);
@@ -47,14 +48,14 @@ impl<E: EllipticCurve> Syscall for WeierstrassAddAssignSyscall<E> {
                 syscall_event,
                 PrecompileEvent::Bls12381Add(event),
             ),
-            CurveType::Secp256r1 => rt.record_mut().add_precompile_event(
+            CurveType::Secp256r1 => rt.add_precompile_event(
                 syscall_code,
                 syscall_event,
                 PrecompileEvent::Secp256r1Add(event),
             ),
             _ => panic!("Unsupported curve"),
         }
-        None
+        Ok(None)
     }
 
     fn num_extra_cycles(&self) -> u32 {

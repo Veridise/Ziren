@@ -5,6 +5,7 @@ use zkm_primitives::consts::{bytes_to_words_le, words_to_bytes_le_vec};
 use crate::{
     events::{PrecompileEvent, U256xU2048MulEvent},
     syscalls::{Syscall, SyscallCode, SyscallContext},
+    ExecutionError,
     Register::{A2, A3},
 };
 
@@ -22,14 +23,14 @@ impl Syscall for U256xU2048MulSyscall {
         syscall_code: SyscallCode,
         arg1: u32,
         arg2: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let clk = rt.clk;
 
         let a_ptr = arg1;
         let b_ptr = arg2;
 
-        let (lo_ptr_memory, lo_ptr) = rt.mr(A2 as u32);
-        let (hi_ptr_memory, hi_ptr) = rt.mr(A3 as u32);
+        let (lo_ptr_memory, lo_ptr) = rt.rr_traced(A2);
+        let (hi_ptr_memory, hi_ptr) = rt.rr_traced(A3);
 
         let (a_memory_records, a) = rt.mr_slice(a_ptr, U256_NUM_WORDS);
         let (b_memory_records, b) = rt.mr_slice(b_ptr, U2048_NUM_WORDS);
@@ -80,7 +81,7 @@ impl Syscall for U256xU2048MulSyscall {
             rt.rt.syscall_event(clk, None, rt.next_pc, syscall_code.syscall_id(), arg1, arg2);
         rt.add_precompile_event(syscall_code, sycall_event, event);
 
-        None
+        Ok(None)
     }
 
     fn num_extra_cycles(&self) -> u32 {

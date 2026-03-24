@@ -13,13 +13,16 @@ use zkm_core_executor::{
     events::{AluEvent, ByteLookupEvent, ByteRecord},
     ByteOpcode, ExecutionRecord, Opcode, Program,
 };
-use zkm_derive::AlignedBorrow;
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
 use zkm_stark::{
     air::{BaseAirBuilder, MachineAir, ZKMAirBuilder},
-    Word,
+    PicusInfo, Word,
 };
 
-use crate::utils::{next_power_of_two, zeroed_f_vec};
+use crate::{
+    utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
+};
 
 /// The number of main trace columns for `LtChip`.
 pub const NUM_LT_COLS: usize = size_of::<LtCols<u8>>();
@@ -29,7 +32,7 @@ pub const NUM_LT_COLS: usize = size_of::<LtCols<u8>>();
 pub struct LtChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Clone, Copy)]
 #[repr(C)]
 pub struct LtCols<T> {
     /// The current/next pc, used for instruction lookup table.
@@ -37,9 +40,11 @@ pub struct LtCols<T> {
     pub next_pc: T,
 
     /// If the opcode is SLT.
+    #[picus(selector)]
     pub is_slt: T,
 
     /// If the opcode is SLTU.
+    #[picus(selector)]
     pub is_sltu: T,
 
     /// The output operand.
@@ -95,15 +100,21 @@ impl<F: PrimeField32> MachineAir<F> for LtChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "Lt".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        LtCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         _: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Generate the trace rows for each event.
         let nb_rows = input.lt_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -128,10 +139,14 @@ impl<F: PrimeField32> MachineAir<F> for LtChip {
 
         // Convert the trace to a row major matrix.
 
-        RowMajorMatrix::new(values, NUM_LT_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_LT_COLS))
     }
 
-    fn generate_dependencies(&self, input: &Self::Record, output: &mut Self::Record) {
+    fn generate_dependencies(
+        &self,
+        input: &Self::Record,
+        output: &mut Self::Record,
+    ) -> Result<(), Self::Error> {
         let chunk_size = std::cmp::max(input.lt_events.len() / num_cpus::get(), 1);
 
         let blu_batches = input
@@ -149,6 +164,7 @@ impl<F: PrimeField32> MachineAir<F> for LtChip {
             .collect::<Vec<_>>();
 
         output.add_byte_lookup_events_from_maps(blu_batches.iter().collect_vec());
+        Ok(())
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -276,8 +292,8 @@ where
         // Source: Jolt 5.3: Set Less Than (https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf)
 
         // We will compute SLTU(b_comp, c_comp) where `b_comp` and `c_comp` where:
-        // * if the operation is `STLU`, `b_comp = b` and `c_comp = c`
-        // * if the operation is `STL`, `b_comp = b & 0x7FFFFFFF` and `c_comp = c & 0x7FFFFFFF``
+        // * if the operation is `SLTU`, `b_comp = b` and `c_comp = c`
+        // * if the operation is `SLT`, `b_comp = b & 0x7FFFFFFF` and `c_comp = c & 0x7FFFFFFF``
         //
         // We will set booleans `b_bit` and `c_bit` so that:
         // * If the operation is `SLTU`, then `b_bit = 0` and `c_bit = 0`.
@@ -338,7 +354,7 @@ where
         // Check that `a[0]` is set correctly.
         builder.assert_eq(
             local.a[0],
-            local.bit_b * (AB::Expr::ONE - local.bit_c) + local.is_sign_eq * local.sltu,
+            local.bit_b * (AB::Expr::one() - local.bit_c) + local.is_sign_eq * local.sltu,
         );
         // Check the 3 most significant bytes of 'a' are zero.
         builder.assert_zero(local.a[1]);
@@ -354,9 +370,9 @@ where
         builder.assert_bool(local.byte_flags[2]);
         builder.assert_bool(local.byte_flags[3]);
         builder.assert_bool(sum_flags.clone());
-        builder.when(is_real.clone()).assert_eq(AB::Expr::ONE - local.is_comp_eq, sum_flags);
+        builder.when(is_real.clone()).assert_eq(AB::Expr::one() - local.is_comp_eq, sum_flags);
 
-        // Constrain `local.sltu == STLU(b_comp, c_comp)`.
+        // Constrain `local.sltu == SLTU(b_comp, c_comp)`.
         //
         // We define bytes `b_comp_byte` and `c_comp_byte` as follows: If `b_comp == c_comp`, then
         // `b_comp_byte = c_comp_byte = 0`. Otherwise, we set `b_comp_byte` and `c_comp_byte` to
@@ -371,11 +387,11 @@ where
 
         // A flag to indicate whether an equality check is necessary (this is for all bytes from
         // most significant until the first inequality.
-        let mut is_inequality_visited = AB::Expr::ZERO;
+        let mut is_inequality_visited = AB::Expr::zero();
 
         // Expressions for computing the comparison bytes.
-        let mut b_comparison_byte = AB::Expr::ZERO;
-        let mut c_comparison_byte = AB::Expr::ZERO;
+        let mut b_comparison_byte = AB::Expr::zero();
+        let mut c_comparison_byte = AB::Expr::zero();
         // Iterate over the bytes in reverse order and select the differing bytes using the byte
         // flag columns values.
         for (b_byte, c_byte, &flag) in
@@ -413,7 +429,7 @@ where
 
         // Now the value of `local.sltu` is equal to the same value for the comparison bytes.
         //
-        // Set `local.sltu = STLU(b_comp_byte, c_comp_byte)` via a lookup.
+        // Set `local.sltu = SLTU(b_comp_byte, c_comp_byte)` via a lookup.
         builder.send_byte(
             ByteOpcode::LTU.as_field::<AB::F>(),
             local.sltu,
@@ -435,23 +451,23 @@ where
 
         // Receive the arguments.
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc,
-            AB::Expr::ZERO,
+            local.next_pc + AB::Expr::from_canonical_u32(4),
+            AB::Expr::zero(),
             local.is_slt * AB::F::from_canonical_u32(Opcode::SLT as u32)
                 + local.is_sltu * AB::F::from_canonical_u32(Opcode::SLTU as u32),
             local.a,
             local.b,
             local.c,
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ONE,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::one(),
             is_real,
         );
     }
@@ -475,7 +491,7 @@ mod tests {
         let mut shard = ExecutionRecord::default();
         shard.lt_events = vec![AluEvent::new(0, Opcode::SLT, 0, 3, 2)];
         let chip = LtChip::default();
-        let generate_trace = chip.generate_trace(&shard, &mut ExecutionRecord::default());
+        let generate_trace = chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         let trace: RowMajorMatrix<KoalaBear> = generate_trace;
         println!("{:?}", trace.values)
     }
@@ -486,7 +502,7 @@ mod tests {
 
         let chip = LtChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(shard, &mut ExecutionRecord::default());
+            chip.generate_trace(shard, &mut ExecutionRecord::default()).unwrap();
         let proof = prove::<KoalaBearPoseidon2, _>(&config, &chip, &mut challenger, trace);
 
         let mut challenger = config.challenger();

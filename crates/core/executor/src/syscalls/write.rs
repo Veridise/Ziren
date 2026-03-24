@@ -1,6 +1,6 @@
 use zkm_primitives::consts::num_to_comma_separated;
 
-use crate::{Executor, Register};
+use crate::{ExecutionError, Executor, Register};
 
 use super::{Syscall, SyscallCode, SyscallContext};
 
@@ -15,7 +15,7 @@ impl Syscall for WriteSyscall {
         _: SyscallCode,
         arg1: u32,
         arg2: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let a2 = Register::A2;
         let rt = &mut ctx.rt;
         let fd = arg1;
@@ -24,43 +24,49 @@ impl Syscall for WriteSyscall {
         // Read nbytes from memory starting at write_buf.
         let bytes = (0..nbytes).map(|i| rt.byte(write_buf + i)).collect::<Vec<u8>>();
         let slice = bytes.as_slice();
-        write_fd(ctx, fd, slice);
-        None
+        write_fd(ctx, fd, slice)?;
+        Ok(None)
     }
 }
 
-pub fn write_fd(ctx: &mut SyscallContext, fd: u32, slice: &[u8]) {
+pub fn write_fd(ctx: &mut SyscallContext, fd: u32, slice: &[u8]) -> Result<(), ExecutionError> {
     let rt = &mut ctx.rt;
     if fd == FD_STDOUT {
-        let s = core::str::from_utf8(slice).unwrap();
-        match parse_cycle_tracker_command(s) {
-            Some(command) => handle_cycle_tracker_command(rt, command),
-            None => {
-                // If the string does not match any known command, print it to stdout.
-                let flush_s = update_io_buf(ctx, fd, s);
-                if !flush_s.is_empty() {
-                    flush_s.into_iter().for_each(|line| println!("stdout: {line}"));
+        if let Ok(s) = core::str::from_utf8(slice) {
+            match parse_cycle_tracker_command(s) {
+                Some(command) => handle_cycle_tracker_command(rt, command),
+                None => {
+                    let flush_s = update_io_buf(ctx, fd, s);
+                    if !flush_s.is_empty() {
+                        flush_s.into_iter().for_each(|line| println!("stdout: {line}"));
+                    }
                 }
             }
+        } else {
+            eprintln!("Warning: Stdout Received invalid UTF-8 data in slice: {slice:?}");
         }
     } else if fd == FD_STDERR {
-        let s = core::str::from_utf8(slice).unwrap();
-        let flush_s = update_io_buf(ctx, fd, s);
-        if !flush_s.is_empty() {
-            flush_s.into_iter().for_each(|line| println!("stderr: {line}"));
+        if let Ok(s) = core::str::from_utf8(slice) {
+            let flush_s = update_io_buf(ctx, fd, s);
+            if !flush_s.is_empty() {
+                flush_s.into_iter().for_each(|line| println!("stderr: {line}"));
+            }
+        } else {
+            eprintln!("Warning: Stderr Received invalid UTF-8 data in slice: {slice:?}");
         }
     } else if fd == FD_PUBLIC_VALUES {
         rt.state.public_values_stream.extend_from_slice(slice);
     } else if fd == FD_HINT {
         rt.state.input_stream.push(slice.to_vec());
     } else if let Some(mut hook) = rt.hook_registry.get(fd) {
-        let res = hook.invoke_hook(rt.hook_env(), slice);
+        let res = hook.invoke_hook(rt.hook_env(), slice)?;
         // Add result vectors to the beginning of the stream.
         let ptr = rt.state.input_stream_ptr;
         rt.state.input_stream.splice(ptr..ptr, res);
     } else {
         tracing::warn!("tried to write to unknown file descriptor {fd}");
     }
+    Ok(())
 }
 
 /// An enum representing the different cycle tracker commands.

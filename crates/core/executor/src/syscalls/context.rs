@@ -76,8 +76,8 @@ impl<'a, 'b> SyscallContext<'a, 'b> {
 
     /// Read a slice of words from memory.
     pub fn mr_slice(&mut self, addr: u32, len: usize) -> (Vec<MemoryReadRecord>, Vec<u32>) {
-        let mut records = Vec::new();
-        let mut values = Vec::new();
+        let mut records = Vec::with_capacity(len);
+        let mut values = Vec::with_capacity(len);
         for i in 0..len {
             let (record, value) = self.mr(addr + i as u32 * 4);
             records.push(record);
@@ -93,13 +93,35 @@ impl<'a, 'b> SyscallContext<'a, 'b> {
 
     /// Write a slice of words to memory.
     pub fn mw_slice(&mut self, addr: u32, values: &[u32]) -> Vec<MemoryWriteRecord> {
-        let mut records = Vec::new();
+        let mut records = Vec::with_capacity(values.len());
         #[allow(clippy::needless_range_loop)]
         for i in 0..values.len() {
             let record = self.mw(addr + i as u32 * 4, values[i]);
             records.push(record);
         }
         records
+    }
+
+    /// Read a register and record the memory access.
+    pub fn rr_traced(&mut self, register: Register) -> (MemoryReadRecord, u32) {
+        let record = self.rt.rr_traced(
+            register,
+            self.current_shard,
+            self.clk,
+            Some(&mut self.local_memory_access),
+        );
+        (record, record.value)
+    }
+
+    /// Write a register and record the memory access.
+    pub fn rw_traced(&mut self, register: Register, value: u32) -> MemoryWriteRecord {
+        self.rt.rw_cpu_traced(
+            register,
+            value,
+            self.current_shard,
+            self.clk,
+            Some(&mut self.local_memory_access),
+        )
     }
 
     /// Postprocess the syscall.  Specifically will process the syscall's memory local events.
@@ -146,7 +168,7 @@ impl<'a, 'b> SyscallContext<'a, 'b> {
     /// Get a slice of words, but doesn't use a memory record.
     #[must_use]
     pub fn slice_unsafe(&mut self, addr: u32, len: usize) -> Vec<u32> {
-        let mut values = Vec::new();
+        let mut values = Vec::with_capacity(len);
         for i in 0..len {
             values.push(self.rt.word(addr + i as u32 * 4));
         }

@@ -137,7 +137,7 @@ where
         let mut finalize_addr_bits: [Felt<_>; 32] =
             core::array::from_fn(|_| unsafe { MaybeUninit::zeroed().assume_init() });
 
-        // Initialize a flag to denote if the any of the recursive proofs represents a shard range
+        // Initialize a flag to denote if any of the recursive proofs represents a shard range
         // where at least once of the shards is an execution shard (i.e. contains cpu).
         let mut contains_execution_shard: Felt<_> = builder.eval(C::F::ZERO);
 
@@ -198,7 +198,7 @@ where
                     *digest = first_digest;
                 }
 
-                // Initiallize start pc.
+                // Initialize start pc.
                 compress_public_values.start_pc = current_public_values.start_pc;
                 pc = current_public_values.start_pc;
 
@@ -333,7 +333,7 @@ where
                 // If `committed_value_digest` is not zero, then `public_values.committed_value_digest
                 // should be the current.
 
-                // Set a flags to indicate whether `committed_value_digest` is non-zero. The flags
+                // Set flags to indicate whether `committed_value_digest` is non-zero. The flags
                 // are given by the elements of the array, and they will be used as filters to
                 // constrain the equality.
                 let mut is_non_zero_flags = vec![];

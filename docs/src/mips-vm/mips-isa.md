@@ -5,60 +5,65 @@ pub enum Opcode {
     // ALU
     ADD = 0,         // ADDSUB
     SUB = 1,         // ADDSUB
-    MULT = 2,        // MUL
-    MULTU = 3,       // MUL
-    MUL = 4,         // MUL
+    MUL = 2,         // MUL
+    MULT = 3,        // MUL
+    MULTU = 4,       // MUL
     DIV = 5,         // DIVREM
     DIVU = 6,        // DIVREM
-    SLL = 7,         // SLL
-    SRL = 8,         // SR
-    SRA = 9,         // SR
-    ROR = 10,        // SR
-    SLT = 11,        // LT
-    SLTU = 12,       // LT
-    AND = 13,        // BITWISE
-    OR = 14,         // BITWISE
-    XOR = 15,        // BITWISE
-    NOR = 16,        // BITWISE
-    CLZ = 17,        // CLO_CLZ
-    CLO = 18,        // CLO_CLZ
-    // Control Flow
-    BEQ = 19,        // BRANCH
-    BGEZ = 20,       // BRANCH
-    BGTZ = 21,       // BRANCH
-    BLEZ = 22,       // BRANCH
-    BLTZ = 23,       // BRANCH
-    BNE = 24,        // BRANCH
-    Jump = 25,       // JUMP
-    Jumpi = 26,      // JUMP
-    JumpDirect = 27, // JUMP
+    MOD = 7,         // DIVREM
+    MODU = 8,        // DIVREM
+    SLL = 9,         // SLL
+    SRL = 10,        // SR
+    SRA = 11,        // SR
+    ROR = 12,        // SR
+    SLT = 13,        // LT
+    SLTU = 14,       // LT
+    AND = 15,        // BITWISE
+    OR = 16,         // BITWISE
+    XOR = 17,        // BITWISE
+    NOR = 18,        // BITWISE
+    CLZ = 19,        // CLO_CLZ
+    CLO = 20,        // CLO_CLZ
+    // Control FLow
+    BEQ = 21,        // BRANCH
+    BGEZ = 22,       // BRANCH
+    BGTZ = 23,       // BRANCH
+    BLEZ = 24,       // BRANCH
+    BLTZ = 25,       // BRANCH
+    BNE = 26,        // BRANCH
+    Jump = 27,       // JUMP
+    Jumpi = 28,      // JUMP
+    JumpDirect = 29, // JUMP
+    SYSCALL = 30,    // SYSCALL
     // Memory Op
-    LB = 28,         // LOAD
-    LBU = 29,        // LOAD
-    LH = 30,         // LOAD
-    LHU = 31,        // LOAD
-    LW = 32,         // LOAD
-    LWL = 33,        // LOAD
-    LWR = 34,        // LOAD
-    LL = 35,         // LOAD
-    SB = 36,         // STORE
-    SH = 37,         // STORE
-    SW = 38,         // STORE
-    SWL = 39,        // STORE
-    SWR = 40,        // STORE
-    SC = 41,         // STORE
-    // Syscall
-    SYSCALL = 42,    // SYSCALL
+    LB = 31,         // LOAD
+    LBU = 32,        // LOAD
+    LH = 33,         // LOAD
+    LHU = 34,        // LOAD
+    LW = 35,         // LOAD
+    LWL = 36,        // LOAD
+    LWR = 37,        // LOAD
+    LL = 38,         // LOAD
+    SB = 39,         // STORE
+    SH = 40,         // STORE
+    SW = 41,         // STORE
+    SWL = 42,        // STORE
+    SWR = 43,        // STORE
+    SC = 44,         // STORE
     // Misc
-    MEQ = 43,        // MOVCOND
-    MNE = 44,        // MOVCOND
-    TEQ = 45,        // MOVCOND
-    SEXT = 46,       // SEXT
-    WSBH = 47,       // MISC
-    EXT = 48,        // EXT
-    MADDU = 49,      // MADDSUB
-    MSUBU = 50,      // MADDSUB
-    INS = 51,        // INS
+    INS = 45,        // INS
+    MADDU = 46,      // MADDSUB
+    MSUBU = 47,      // MADDSUB
+    MADD = 48,       // MADDSUB
+    MSUB = 49,       // MADDSUB
+    MEQ = 50,        // MOVCOND
+    MNE = 51,        // MOVCOND
+    WSBH = 52,       // WSBH
+    EXT = 53,        // EXT
+    TEQ = 54,        // TEQ
+    SEXT = 55,       // SEXT
+
+    // Syscall
     UNIMPL = 0xff,
 }
 ```
@@ -78,7 +83,7 @@ Instructions BEQ (branch if equal), BGEZ (branch if greater than or equal to zer
 Jump-related instructions, including Jump, Jumpi, and JumpDirect, are responsible for altering the execution flow by redirecting it to different parts of the program. They are used for implementing function calls, loops, and other control structures that require non-sequential execution, ensuring that the program can navigate its code dynamically.
 
 **Syscall Instructions**  
-SYSCALL triggers a system call, allowing the program to request services from the zkvm operating system. The service can be a precompiles computation, such as do sha extend operation by `SHA_EXTEND` precompile. it also can be input/output operation such as `SYSHINTREADYSHINTREAD` and `WRITE`.
+SYSCALL triggers a system call, allowing the program to request services from the zkvm operating system. The service can be a precompile computation, such as do sha extend operation by `SHA_EXTEND` precompile. it also can be input/output operation such as `SYSHINTREADYSHINTREAD` and `WRITE`.
 
 **Misc Instructions**  
 This category includes other instructions. TEQ is typically used to test equality conditions between registers. MADDU/MSUBU is used for multiply accumulation. SEB/SEH is for data sign extended. EXT/INS is for bits extraction and insertion.
@@ -170,56 +175,57 @@ The support instructions are as follows:
 
 ## Supported syscalls
 
-| syscall number                           | function                                           |
-|------------------------------------------|----------------------------------------------------|
-| SYSHINTLEN = 0x00_00_00F0,              | Return length of current input data.               |
-| SYSHINTREAD = 0x00_00_00F1,             | Read current input data.                           |
-| SYSVERIFY = 0x00_00_00F2,               | Verify pre-compile program.                        |
-| HALT = 0x00_00_0000,                    | Halts the program.                                 |
-| WRITE = 0x00_00_0002,                   | Write to the output buffer.                        |
-| ENTER_UNCONSTRAINED = 0x00_00_0003,     | Enter unconstrained block.                         |
-| EXIT_UNCONSTRAINED = 0x00_00_0004,      | Exit unconstrained block.                          |
-| SHA_EXTEND = 0x30_01_0005,              | Executes the `SHA_EXTEND` precompile.              |
-| SHA_COMPRESS = 0x01_01_0006,            | Executes the `SHA_COMPRESS` precompile.            |
-| ED_ADD = 0x01_01_0007,                  | Executes the `ED_ADD` precompile.                  |
-| ED_DECOMPRESS = 0x00_01_0008,           | Executes the `ED_DECOMPRESS` precompile.           |
-| KECCAK_SPONGE = 0x01_01_0009,           | Executes the `KECCAK_SPONGE` precompile.           |
-| SECP256K1_ADD = 0x01_01_000A,           | Executes the `SECP256K1_ADD` precompile.           |
-| SECP256K1_DOUBLE = 0x00_01_000B,        | Executes the `SECP256K1_DOUBLE` precompile.        |
-| SECP256K1_DECOMPRESS = 0x00_01_000C,    | Executes the `SECP256K1_DECOMPRESS` precompile.    |
-| BN254_ADD = 0x01_01_000E,               | Executes the `BN254_ADD` precompile.               |
-| BN254_DOUBLE = 0x00_01_000F,            | Executes the `BN254_DOUBLE` precompile.            |
-| COMMIT = 0x00_00_0010,                  | Executes the `COMMIT` precompile.                  |
-| COMMIT_DEFERRED_PROOFS = 0x00_00_001A,  | Executes the `COMMIT_DEFERRED_PROOFS` precompile.  |
-| VERIFY_ZKM_PROOF = 0x00_00_001B,        | Executes the `VERIFY_ZKM_PROOF` precompile.        |
-| BLS12381_DECOMPRESS = 0x00_01_001C,     | Executes the `BLS12381_DECOMPRESS` precompile.     |
-| UINT256_MUL = 0x01_01_001D,             | Executes the `UINT256_MUL` precompile.             |
-| U256XU2048_MUL = 0x01_01_002F,          | Executes the `U256XU2048_MUL` precompile.          |
-| BLS12381_ADD = 0x01_01_001E,            | Executes the `BLS12381_ADD` precompile.            |
-| BLS12381_DOUBLE = 0x00_01_001F,         | Executes the `BLS12381_DOUBLE` precompile.         |
-| BLS12381_FP_ADD = 0x01_01_0020,         | Executes the `BLS12381_FP_ADD` precompile.         |
-| BLS12381_FP_SUB = 0x01_01_0021,         | Executes the `BLS12381_FP_SUB` precompile.         |
-| BLS12381_FP_MUL = 0x01_01_0022,         | Executes the `BLS12381_FP_MUL` precompile.         |
-| BLS12381_FP2_ADD = 0x01_01_0023,        | Executes the `BLS12381_FP2_ADD` precompile.        |
-| BLS12381_FP2_SUB = 0x01_01_0024,        | Executes the `BLS12381_FP2_SUB` precompile.        |
-| BLS12381_FP2_MUL = 0x01_01_0025,        | Executes the `BLS12381_FP2_MUL` precompile.        |
-| BN254_FP_ADD = 0x01_01_0026,            | Executes the `BN254_FP_ADD` precompile.            |
-| BN254_FP_SUB = 0x01_01_0027,            | Executes the `BN254_FP_SUB` precompile.            |
-| BN254_FP_MUL = 0x01_01_0028,            | Executes the `BN254_FP_MUL` precompile.            |
-| BN254_FP2_ADD = 0x01_01_0029,           | Executes the `BN254_FP2_ADD` precompile.           |
-| BN254_FP2_SUB = 0x01_01_002A,           | Executes the `BN254_FP2_SUB` precompile.           |
-| BN254_FP2_MUL = 0x01_01_002B,           | Executes the `BN254_FP2_MUL` precompile.           |
-| SECP256R1_ADD = 0x01_01_002C,           | Executes the `SECP256R1_ADD` precompile.           |
-| SECP256R1_DOUBLE = 0x00_01_002D,        | Executes the `SECP256R1_DOUBLE` precompile.        |
-| SECP256R1_DECOMPRESS = 0x00_01_002E,    | Executes the `SECP256R1_DECOMPRESS` precompile.    |
-| POSEIDON2_PERMUTE = 0x00_01_0030,       | Executes the `POSEIDON2_PERMUTE` precompile.       |
-| SYS_MMAP = 4210,                        | Executes the `Linux MMAP API` precompile.          |
-| SYS_MMAP2 = 4090,                       | Executes the `Linux MMAP2 API` precompile.         |
-| SYS_BRK = 4045,                         | Executes the `Linux BRK API` precompile.           |
-| SYS_MMAP2 = 4246,                       | Executes the `Linux EXIT GROUP API` precompile.    |
-| SYS_READ = 4003,                        | Executes the `Linux READ API` precompile.          |
-| SYS_WRITE = 4004,                       | Executes the `Linux WRITE API` precompile.         |
-| SYS_FCNTL = 4055,                       | Executes the `Linux FCNTL API` precompile.         |
-| SYS_NOP = 4000,                         | Executes the `NOP API` precompile.                 |
+| syscall number                         | function                                           |
+|----------------------------------------|----------------------------------------------------|
+| SYSHINTLEN = 0x00_00_00F0,             | Return length of current input data.               |
+| SYSHINTREAD = 0x00_00_00F1,            | Read current input data.                           |
+| SYSVERIFY = 0x00_00_00F2,              | Verify pre-compile program.                        |
+| HALT = 0x00_00_0000,                   | Halts the program.                                 |
+| WRITE = 0x00_00_0002,                  | Write to the output buffer.                        |
+| ENTER_UNCONSTRAINED = 0x00_00_0003,    | Enter unconstrained block.                         |
+| EXIT_UNCONSTRAINED = 0x00_00_0004,     | Exit unconstrained block.                          |
+| SHA_EXTEND = 0x30_01_0005,             | Executes the `SHA_EXTEND` precompile.              |
+| SHA_COMPRESS = 0x01_01_0006,           | Executes the `SHA_COMPRESS` precompile.            |
+| ED_ADD = 0x01_01_0007,                 | Executes the `ED_ADD` precompile.                  |
+| ED_DECOMPRESS = 0x00_01_0008,          | Executes the `ED_DECOMPRESS` precompile.           |
+| KECCAK_SPONGE = 0x01_01_0009,          | Executes the `KECCAK_SPONGE` precompile.           |
+| SECP256K1_ADD = 0x01_01_000A,          | Executes the `SECP256K1_ADD` precompile.           |
+| SECP256K1_DOUBLE = 0x00_01_000B,       | Executes the `SECP256K1_DOUBLE` precompile.        |
+| SECP256K1_DECOMPRESS = 0x00_01_000C,   | Executes the `SECP256K1_DECOMPRESS` precompile.    |
+| BN254_ADD = 0x01_01_000E,              | Executes the `BN254_ADD` precompile.               |
+| BN254_DOUBLE = 0x00_01_000F,           | Executes the `BN254_DOUBLE` precompile.            |
+| COMMIT = 0x00_00_0010,                 | Executes the `COMMIT` precompile.                  |
+| COMMIT_DEFERRED_PROOFS = 0x00_00_001A, | Executes the `COMMIT_DEFERRED_PROOFS` precompile.  |
+| VERIFY_ZKM_PROOF = 0x00_00_001B,       | Executes the `VERIFY_ZKM_PROOF` precompile.        |
+| BLS12381_DECOMPRESS = 0x00_01_001C,    | Executes the `BLS12381_DECOMPRESS` precompile.     |
+| UINT256_MUL = 0x01_01_001D,            | Executes the `UINT256_MUL` precompile.             |
+| U256XU2048_MUL = 0x01_01_002F,         | Executes the `U256XU2048_MUL` precompile.          |
+| BLS12381_ADD = 0x01_01_001E,           | Executes the `BLS12381_ADD` precompile.            |
+| BLS12381_DOUBLE = 0x00_01_001F,        | Executes the `BLS12381_DOUBLE` precompile.         |
+| BLS12381_FP_ADD = 0x01_01_0020,        | Executes the `BLS12381_FP_ADD` precompile.         |
+| BLS12381_FP_SUB = 0x01_01_0021,        | Executes the `BLS12381_FP_SUB` precompile.         |
+| BLS12381_FP_MUL = 0x01_01_0022,        | Executes the `BLS12381_FP_MUL` precompile.         |
+| BLS12381_FP2_ADD = 0x01_01_0023,       | Executes the `BLS12381_FP2_ADD` precompile.        |
+| BLS12381_FP2_SUB = 0x01_01_0024,       | Executes the `BLS12381_FP2_SUB` precompile.        |
+| BLS12381_FP2_MUL = 0x01_01_0025,       | Executes the `BLS12381_FP2_MUL` precompile.        |
+| BN254_FP_ADD = 0x01_01_0026,           | Executes the `BN254_FP_ADD` precompile.            |
+| BN254_FP_SUB = 0x01_01_0027,           | Executes the `BN254_FP_SUB` precompile.            |
+| BN254_FP_MUL = 0x01_01_0028,           | Executes the `BN254_FP_MUL` precompile.            |
+| BN254_FP2_ADD = 0x01_01_0029,          | Executes the `BN254_FP2_ADD` precompile.           |
+| BN254_FP2_SUB = 0x01_01_002A,          | Executes the `BN254_FP2_SUB` precompile.           |
+| BN254_FP2_MUL = 0x01_01_002B,          | Executes the `BN254_FP2_MUL` precompile.           |
+| SECP256R1_ADD = 0x01_01_002C,          | Executes the `SECP256R1_ADD` precompile.           |
+| SECP256R1_DOUBLE = 0x00_01_002D,       | Executes the `SECP256R1_DOUBLE` precompile.        |
+| SECP256R1_DECOMPRESS = 0x00_01_002E,   | Executes the `SECP256R1_DECOMPRESS` precompile.    |
+| POSEIDON2_PERMUTE = 0x00_01_0030,      | Executes the `POSEIDON2_PERMUTE` precompile.       |
+| BOOLEAN_CIRCUIT_GARBLE = 0x00_01_0031, | Executes the `BOOLEAN_CIRCUIT_GARBLE` precompile.  |
+| SYS_MMAP = 4210,                       | Executes the `Linux MMAP API` precompile.          |
+| SYS_MMAP2 = 4090,                      | Executes the `Linux MMAP2 API` precompile.         |
+| SYS_BRK = 4045,                        | Executes the `Linux BRK API` precompile.           |
+| SYS_MMAP2 = 4246,                      | Executes the `Linux EXIT GROUP API` precompile.    |
+| SYS_READ = 4003,                       | Executes the `Linux READ API` precompile.          |
+| SYS_WRITE = 4004,                      | Executes the `Linux WRITE API` precompile.         |
+| SYS_FCNTL = 4055,                      | Executes the `Linux FCNTL API` precompile.         |
+| SYS_NOP = 4000,                        | Executes the `NOP API` precompile.                 |
 
 All the unimplemented Linux syscalls API are treated as SYS_NOP.

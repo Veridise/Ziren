@@ -15,8 +15,8 @@ use crate::{
     events::{
         AluEvent, BranchEvent, ByteLookupEvent, ByteRecord, CompAluEvent, CpuEvent,
         GlobalLookupEvent, JumpEvent, MemInstrEvent, MemoryInitializeFinalizeEvent,
-        MemoryLocalEvent, MemoryRecordEnum, MiscEvent, PrecompileEvent, PrecompileEvents,
-        SyscallEvent,
+        MemoryLocalEvent, MemoryRecordEnum, MiscEvent, MovCondEvent, PrecompileEvent,
+        PrecompileEvents, SyscallEvent,
     },
     syscalls::{precompiles::keccak::sponge::GENERAL_BLOCK_SIZE_U32S, SyscallCode},
     MipsAirId, Program,
@@ -32,12 +32,10 @@ pub struct ExecutionRecord {
     pub program: Arc<Program>,
     /// A trace of the CPU events which get emitted during execution.
     pub cpu_events: Vec<CpuEvent>,
-    /// A trace of the ADD, ADDU, ADDI and ADDIU events.
-    pub add_events: Vec<AluEvent>,
+    /// A trace of the ADD, ADDU, ADDI, ADDIU, SUB and SUBU events.
+    pub add_sub_events: Vec<AluEvent>,
     /// A trace of the MUL, MULT and MULTU events.
     pub mul_events: Vec<CompAluEvent>,
-    /// A trace of the SUB and SUBU events.
-    pub sub_events: Vec<AluEvent>,
     /// A trace of the XOR, OR, AND and NOR events.
     pub bitwise_events: Vec<AluEvent>,
     /// A trace of the SLL and SLLV events.
@@ -56,6 +54,8 @@ pub struct ExecutionRecord {
     pub branch_events: Vec<BranchEvent>,
     /// A trace of the jump events.
     pub jump_events: Vec<JumpEvent>,
+    /// A trace of the conditional move events.
+    pub movcond_events: Vec<MovCondEvent>,
     /// A trace of the misc events.
     pub misc_events: Vec<MiscEvent>,
     /// A trace of the byte lookups that are needed.
@@ -83,6 +83,16 @@ pub struct ExecutionRecord {
 impl ExecutionRecord {
     /// Create a new [`ExecutionRecord`].
     #[must_use]
+    #[cfg(feature = "pre-alloc")]
+    pub fn new(program: Arc<Program>) -> Self {
+        let cpu_events = Vec::with_capacity(1 << 22);
+        let add_sub_events = Vec::with_capacity(1 << 22);
+        let memory_instr_events = Vec::with_capacity(1 << 21);
+        Self { program, cpu_events, memory_instr_events, add_sub_events, ..Default::default() }
+    }
+
+    #[must_use]
+    #[cfg(not(feature = "pre-alloc"))]
     pub fn new(program: Arc<Program>) -> Self {
         Self { program, ..Default::default() }
     }
@@ -114,7 +124,15 @@ impl ExecutionRecord {
 
     /// Splits the deferred [`ExecutionRecord`] into multiple [`ExecutionRecord`]s, each which
     /// contain a "reasonable" number of deferred events.
-    pub fn split(&mut self, last: bool, opts: SplitOpts) -> Vec<ExecutionRecord> {
+    ///
+    /// The optional `last_record` will be provided if there are few enough deferred events that
+    /// they can all be packed into the already existing last record.
+    pub fn split(
+        &mut self,
+        last: bool,
+        last_record: Option<&mut ExecutionRecord>,
+        opts: SplitOpts,
+    ) -> Vec<ExecutionRecord> {
         let mut shards = Vec::new();
 
         let precompile_events = take(&mut self.precompile_events);
@@ -124,44 +142,68 @@ impl ExecutionRecord {
                 SyscallCode::KECCAK_SPONGE => opts.keccak,
                 SyscallCode::SHA_EXTEND => opts.sha_extend,
                 SyscallCode::SHA_COMPRESS => opts.sha_compress,
+                SyscallCode::BOOLEAN_CIRCUIT_GARBLE => opts.boolean_circuit_garble,
                 _ => opts.deferred,
             };
 
             let mut shards_input = Vec::new();
-            let remainder = if syscall_code == SyscallCode::KECCAK_SPONGE {
-                let mut current_shard = Vec::new();
-                let mut current_len = 0;
+            let remainder = match syscall_code {
+                SyscallCode::KECCAK_SPONGE => {
+                    let mut current_shard = Vec::new();
+                    let mut current_len = 0;
 
-                for (syscall_event, event) in events {
-                    if let PrecompileEvent::KeccakSponge(event) = &event {
-                        // Here, input_len_u32s must be a multiple of GENERAL_BLOCK_SIZE_U32S.
-                        let input_len = event.input_len_u32s as usize / GENERAL_BLOCK_SIZE_U32S;
+                    for (syscall_event, event) in events {
+                        if let PrecompileEvent::KeccakSponge(event) = &event {
+                            // Here, input_len_u32s must be a multiple of GENERAL_BLOCK_SIZE_U32S.
+                            let input_len = event.input_len_u32s as usize / GENERAL_BLOCK_SIZE_U32S;
 
-                        if current_len + input_len > threshold && !current_shard.is_empty() {
-                            let mut record = ExecutionRecord::new(self.program.clone());
-                            record.precompile_events.insert(syscall_code, current_shard);
-                            shards_input.push(record);
-                            current_shard = Vec::new();
-                            current_len = 0;
+                            if current_len + input_len > threshold && !current_shard.is_empty() {
+                                let mut record = ExecutionRecord::new(self.program.clone());
+                                record.precompile_events.insert(syscall_code, current_shard);
+                                shards_input.push(record);
+                                current_shard = Vec::new();
+                                current_len = 0;
+                            }
+                            current_len += input_len;
                         }
-                        current_len += input_len;
+                        current_shard.push((syscall_event, event));
                     }
-                    current_shard.push((syscall_event, event));
+                    current_shard
                 }
+                SyscallCode::BOOLEAN_CIRCUIT_GARBLE => {
+                    let mut current_shard = Vec::new();
+                    let mut current_len = 0;
 
-                current_shard
-            } else {
-                let chunks = events.chunks_exact(threshold);
-                let remainder = chunks.remainder().to_vec();
+                    for (syscall_event, event) in events {
+                        if let PrecompileEvent::BooleanCircuitGarble(event) = &event {
+                            // Here, input_len_u32s must be a multiple of GENERAL_BLOCK_SIZE_U32S.
+                            let input_len = event.num_gates() + 1;
 
-                for chunk in chunks {
-                    let mut record = ExecutionRecord::new(self.program.clone());
-                    record.precompile_events.insert(syscall_code, chunk.to_vec());
-                    shards_input.push(record);
+                            if current_len + input_len > threshold && !current_shard.is_empty() {
+                                let mut record = ExecutionRecord::new(self.program.clone());
+                                record.precompile_events.insert(syscall_code, current_shard);
+                                shards_input.push(record);
+                                current_shard = Vec::new();
+                                current_len = 0;
+                            }
+                            current_len += input_len;
+                        }
+                        current_shard.push((syscall_event, event));
+                    }
+                    current_shard
                 }
-
-                remainder
+                _ => {
+                    let chunks = events.chunks_exact(threshold);
+                    let remainder = chunks.remainder().to_vec();
+                    for chunk in chunks {
+                        let mut record = ExecutionRecord::new(self.program.clone());
+                        record.precompile_events.insert(syscall_code, chunk.to_vec());
+                        shards_input.push(record);
+                    }
+                    remainder
+                }
             };
+
             if !remainder.is_empty() {
                 if last {
                     let mut record = ExecutionRecord::new(self.program.clone());
@@ -179,6 +221,18 @@ impl ExecutionRecord {
             self.global_memory_initialize_events.sort_by_key(|event| event.addr);
             self.global_memory_finalize_events.sort_by_key(|event| event.addr);
 
+            // If there are no precompile shards, and `last_record` is provided, pack the memory events
+            // into the last record.
+            let pack_memory_events_into_last_record = last_record.is_some() && shards.is_empty();
+            let mut blank_record = ExecutionRecord::new(self.program.clone());
+
+            // If `last_record` is None, use a blank record to store the memory events.
+            let last_record_ref = if pack_memory_events_into_last_record {
+                last_record.unwrap()
+            } else {
+                &mut blank_record
+            };
+
             let mut init_addr_bits = [0; 32];
             let mut finalize_addr_bits = [0; 32];
             for mem_chunks in self
@@ -193,25 +247,32 @@ impl ExecutionRecord {
                     EitherOrBoth::Left(mem_init_chunk) => (mem_init_chunk, [].as_slice()),
                     EitherOrBoth::Right(mem_finalize_chunk) => ([].as_slice(), mem_finalize_chunk),
                 };
-                let mut shard = ExecutionRecord::new(self.program.clone());
-                shard.global_memory_initialize_events.extend_from_slice(mem_init_chunk);
-                shard.public_values.previous_init_addr_bits = init_addr_bits;
+                last_record_ref.global_memory_initialize_events.extend_from_slice(mem_init_chunk);
+                last_record_ref.public_values.previous_init_addr_bits = init_addr_bits;
                 if let Some(last_event) = mem_init_chunk.last() {
                     let last_init_addr_bits = core::array::from_fn(|i| (last_event.addr >> i) & 1);
                     init_addr_bits = last_init_addr_bits;
                 }
-                shard.public_values.last_init_addr_bits = init_addr_bits;
+                last_record_ref.public_values.last_init_addr_bits = init_addr_bits;
 
-                shard.global_memory_finalize_events.extend_from_slice(mem_finalize_chunk);
-                shard.public_values.previous_finalize_addr_bits = finalize_addr_bits;
+                last_record_ref.global_memory_finalize_events.extend_from_slice(mem_finalize_chunk);
+                last_record_ref.public_values.previous_finalize_addr_bits = finalize_addr_bits;
                 if let Some(last_event) = mem_finalize_chunk.last() {
                     let last_finalize_addr_bits =
                         core::array::from_fn(|i| (last_event.addr >> i) & 1);
                     finalize_addr_bits = last_finalize_addr_bits;
                 }
-                shard.public_values.last_finalize_addr_bits = finalize_addr_bits;
+                last_record_ref.public_values.last_finalize_addr_bits = finalize_addr_bits;
 
-                shards.push(shard);
+                if !pack_memory_events_into_last_record {
+                    // If not packing memory events into the last record, add 'last_record_ref'
+                    // to the returned records. `take` replaces `blank_program` with the default.
+                    shards.push(take(last_record_ref));
+
+                    // Reset the last record so its program is the correct one. (The default program
+                    // provided by `take` contains no instructions.)
+                    last_record_ref.program = self.program.clone();
+                }
             }
         }
 
@@ -285,9 +346,8 @@ impl MachineRecord for ExecutionRecord {
     fn stats(&self) -> HashMap<String, usize> {
         let mut stats = HashMap::new();
         stats.insert("cpu_events".to_string(), self.cpu_events.len());
-        stats.insert("add_events".to_string(), self.add_events.len());
+        stats.insert("add_sub_events".to_string(), self.add_sub_events.len());
         stats.insert("mul_events".to_string(), self.mul_events.len());
-        stats.insert("sub_events".to_string(), self.sub_events.len());
         stats.insert("bitwise_events".to_string(), self.bitwise_events.len());
         stats.insert("shift_left_events".to_string(), self.shift_left_events.len());
         stats.insert("shift_right_events".to_string(), self.shift_right_events.len());
@@ -322,8 +382,7 @@ impl MachineRecord for ExecutionRecord {
 
     fn append(&mut self, other: &mut ExecutionRecord) {
         self.cpu_events.append(&mut other.cpu_events);
-        self.add_events.append(&mut other.add_events);
-        self.sub_events.append(&mut other.sub_events);
+        self.add_sub_events.append(&mut other.add_sub_events);
         self.mul_events.append(&mut other.mul_events);
         self.bitwise_events.append(&mut other.bitwise_events);
         self.shift_left_events.append(&mut other.shift_left_events);

@@ -24,6 +24,7 @@ use zkm_stark::{
 use crate::{
     operations::{GlobalAccumulationOperation, GlobalLookupOperation},
     utils::{indices_arr, next_power_of_two, zeroed_f_vec},
+    CoreChipError,
 };
 use zkm_derive::AlignedBorrow;
 
@@ -39,7 +40,7 @@ const GLOBAL_COL_MAP: GlobalCols<usize> = make_col_map();
 
 pub const GLOBAL_INITIAL_DIGEST_POS: usize = GLOBAL_COL_MAP.accumulation.initial_digest[0].0[0];
 
-pub const GLOBAL_INITIAL_DIGEST_POS_COPY: usize = 377;
+pub const GLOBAL_INITIAL_DIGEST_POS_COPY: usize = 64;
 
 #[repr(C)]
 pub struct Ghost {
@@ -66,12 +67,18 @@ impl<F: PrimeField32> MachineAir<F> for GlobalChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         assert_eq!(GLOBAL_INITIAL_DIGEST_POS_COPY, GLOBAL_INITIAL_DIGEST_POS);
         "Global".to_string()
     }
 
-    fn generate_dependencies(&self, input: &Self::Record, output: &mut Self::Record) {
+    fn generate_dependencies(
+        &self,
+        input: &Self::Record,
+        output: &mut Self::Record,
+    ) -> Result<(), Self::Error> {
         let events = &input.global_lookup_events;
 
         let chunk_size = std::cmp::max(events.len() / num_cpus::get(), 1);
@@ -89,14 +96,26 @@ impl<F: PrimeField32> MachineAir<F> for GlobalChip {
             .collect::<Vec<_>>();
 
         output.add_byte_lookup_events(blu_batches.into_iter().flatten().collect());
+        Ok(())
     }
 
-    fn generate_trace(&self, input: &Self::Record, _: &mut Self::Record) -> RowMajorMatrix<F> {
+    fn num_rows(&self, input: &Self::Record) -> Option<usize> {
         let events = &input.global_lookup_events;
-
         let nb_rows = events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
         let padded_nb_rows = next_power_of_two(nb_rows, size_log2);
+        Some(padded_nb_rows)
+    }
+
+    fn generate_trace(
+        &self,
+        input: &Self::Record,
+        _: &mut Self::Record,
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
+        let events = &input.global_lookup_events;
+
+        let nb_rows = events.len();
+        let padded_nb_rows = <GlobalChip as MachineAir<F>>::num_rows(self, input).unwrap();
         let mut values = zeroed_f_vec(padded_nb_rows * NUM_GLOBAL_COLS);
         let chunk_size = std::cmp::max(nb_rows / num_cpus::get(), 0) + 1;
 
@@ -173,7 +192,7 @@ impl<F: PrimeField32> MachineAir<F> for GlobalChip {
             },
         );
 
-        RowMajorMatrix::new(values, NUM_GLOBAL_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_GLOBAL_COLS))
     }
 
     fn included(&self, _: &Self::Record) -> bool {
@@ -272,7 +291,7 @@ mod tests {
         let chip: GlobalChip = GlobalChip;
 
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         println!("{:?}", trace.values);
 
         for mem_event in shard.global_memory_finalize_events {

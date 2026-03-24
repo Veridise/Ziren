@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
 const MAX_SHARD_SIZE: usize = 1 << 21;
-const RECURSION_MAX_SHARD_SIZE: usize = 1 << 22;
+const RECURSION_MAX_SHARD_SIZE: usize = 1 << 21;
 const MAX_SHARD_BATCH_SIZE: usize = 8;
 const DEFAULT_TRACE_GEN_WORKERS: usize = 1;
 const DEFAULT_CHECKPOINTS_CHANNEL_CAPACITY: usize = 128;
@@ -45,7 +45,7 @@ impl ZKMProverOpts {
             33..49 => (20, 1, 2),
             49..65 => (21, 1, 3),
             65..81 => (21, 3, 1),
-            81.. => (21, 4, 1),
+            81.. => (22, 4, 1),
         }
     }
 
@@ -68,11 +68,43 @@ impl ZKMProverOpts {
         opts.core_opts.split_opts.keccak /= divisor;
         opts.core_opts.split_opts.sha_extend /= divisor;
         opts.core_opts.split_opts.sha_compress /= divisor;
+        opts.core_opts.split_opts.boolean_circuit_garble /= divisor;
         opts.core_opts.split_opts.memory /= divisor;
 
         opts.recursion_opts.shard_batch_size = 2;
         opts.recursion_opts.records_and_traces_channel_capacity = 1;
         opts.recursion_opts.trace_gen_workers = 1;
+
+        opts
+    }
+
+    /// Get the default prover options for a prover on GPU given the amount of CPU and GPU memory.
+    #[must_use]
+    pub fn gpu(_cpu_ram_gb: usize, gpu_ram_gb: usize) -> Self {
+        let mut opts = ZKMProverOpts::default();
+
+        // Set the core options.
+        if 24 <= gpu_ram_gb {
+            //let log2_shard_size = 21;
+            //opts.core_opts.shard_size = 1 << log2_shard_size;
+            opts.core_opts.shard_batch_size = 1;
+
+            //let log2_deferred_threshold = 14;
+            //opts.core_opts.split_opts = SplitOpts::new(1 << log2_deferred_threshold);
+
+            //opts.core_opts.records_and_traces_channel_capacity = 4;
+            //opts.core_opts.trace_gen_workers = 4;
+
+            //if cpu_ram_gb <= 20 {
+            //    opts.core_opts.records_and_traces_channel_capacity = 1;
+            //    opts.core_opts.trace_gen_workers = 2;
+            //}
+        } else {
+            unreachable!("not enough gpu memory");
+        }
+
+        // Set the recursion options.
+        opts.recursion_opts.shard_batch_size = 1;
 
         opts
     }
@@ -95,6 +127,8 @@ pub struct ZKMCoreOpts {
     pub checkpoints_channel_capacity: usize,
     /// The capacity of the channel for records and traces.
     pub records_and_traces_channel_capacity: usize,
+    /// The frequency for shape checks.
+    pub shape_check_frequency: u64,
 }
 
 impl Default for ZKMCoreOpts {
@@ -126,6 +160,8 @@ impl Default for ZKMCoreOpts {
                     |_| DEFAULT_RECORDS_AND_TRACES_CHANNEL_CAPACITY,
                     |s| s.parse::<usize>().unwrap_or(DEFAULT_RECORDS_AND_TRACES_CHANNEL_CAPACITY),
                 ),
+            shape_check_frequency: env::var("SHAPE_CHECK_FREQUENCY")
+                .map_or_else(|_| 16, |s| s.parse::<u64>().unwrap_or(16)),
             reconstruct_commitments: true,
         };
 
@@ -140,6 +176,7 @@ impl Default for ZKMCoreOpts {
         opts.split_opts.keccak /= divisor;
         opts.split_opts.sha_extend /= divisor;
         opts.split_opts.sha_compress /= divisor;
+        opts.split_opts.boolean_circuit_garble /= divisor;
         opts.split_opts.memory /= divisor;
 
         opts
@@ -188,6 +225,8 @@ impl ZKMCoreOpts {
                     |_| DEFAULT_RECORDS_AND_TRACES_CHANNEL_CAPACITY,
                     |s| s.parse::<usize>().unwrap_or(DEFAULT_RECORDS_AND_TRACES_CHANNEL_CAPACITY),
                 ),
+            shape_check_frequency: env::var("SHAPE_CHECK_FREQUENCY")
+                .map_or_else(|_| 16, |s| s.parse::<u64>().unwrap_or(16)),
             reconstruct_commitments: true,
         }
     }
@@ -204,8 +243,13 @@ pub struct SplitOpts {
     pub sha_extend: usize,
     /// The threshold for sha compress events.
     pub sha_compress: usize,
+    /// The threshold for Boolean Circuit Garble events
+    pub boolean_circuit_garble: usize,
     /// The threshold for memory events.
     pub memory: usize,
+    /// The threshold for combining the memory init/finalize events in to the current shard in
+    /// terms of cycles.
+    pub combine_memory_threshold: usize,
 }
 
 impl SplitOpts {
@@ -217,7 +261,9 @@ impl SplitOpts {
             keccak: 8 * deferred_split_threshold / 24,
             sha_extend: 32 * deferred_split_threshold / 48,
             sha_compress: 32 * deferred_split_threshold / 80,
+            boolean_circuit_garble: deferred_split_threshold / 8,
             memory: 64 * deferred_split_threshold,
+            combine_memory_threshold: 1 << 17,
         }
     }
 }

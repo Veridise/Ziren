@@ -22,6 +22,7 @@ pub use code::*;
 pub use context::*;
 use hint::{HintLenSyscall, HintReadSyscall};
 use precompiles::{
+    boolean_circuit::garble::BooleanCircuitGarbleSyscall,
     edwards::{add::EdwardsAddAssignSyscall, decompress::EdwardsDecompressSyscall},
     fptower::{Fp2AddSubSyscall, Fp2MulSyscall, FpOpSyscall},
     keccak::sponge::KeccakSpongeSyscall,
@@ -53,7 +54,7 @@ use zkm_curves::{
     },
 };
 
-use crate::events::FieldOperation;
+use crate::{events::FieldOperation, ExecutionError};
 
 /// A system call in the Ziren zkVM.
 ///
@@ -71,7 +72,7 @@ pub trait Syscall: Send + Sync {
         syscall_code: SyscallCode,
         arg1: u32,
         arg2: u32,
-    ) -> Option<u32>;
+    ) -> Result<Option<u32>, ExecutionError>;
 
     /// The number of extra cycles that the syscall takes to execute.
     ///
@@ -103,6 +104,8 @@ pub fn default_syscall_map() -> HashMap<SyscallCode, Arc<dyn Syscall>> {
     syscall_map.insert(SyscallCode::POSEIDON2_PERMUTE, Arc::new(Poseidon2PermuteSyscall));
 
     syscall_map.insert(SyscallCode::KECCAK_SPONGE, Arc::new(KeccakSpongeSyscall));
+
+    syscall_map.insert(SyscallCode::BOOLEAN_CIRCUIT_GARBLE, Arc::new(BooleanCircuitGarbleSyscall));
 
     syscall_map.insert(
         SyscallCode::SECP256K1_ADD,
@@ -243,7 +246,19 @@ pub fn default_syscall_map() -> HashMap<SyscallCode, Arc<dyn Syscall>> {
     syscall_map.insert(SyscallCode::SYS_MMAP2, Arc::new(SysMmapSyscall));
     syscall_map.insert(SyscallCode::SYS_CLONE, Arc::new(SysCloneSyscall));
     syscall_map.insert(SyscallCode::SYS_FCNTL, Arc::new(SysFcntlSyscall));
-    syscall_map.insert(SyscallCode::SYS_NOP, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_OPEN, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_CLOSE, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_RT_SIGACTION, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_RT_SIGPROCMASK, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_MADVISE, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_GETTID, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_SCHED_GETAFFINITY, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_CLOCK_GETTIME, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_PRLIMIT64, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_SIGALTSTACK, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_OPENAT, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_FSTAT64, Arc::new(SysNopSyscall));
+    syscall_map.insert(SyscallCode::SYS_MUNMAP, Arc::new(SysNopSyscall));
 
     syscall_map
 }

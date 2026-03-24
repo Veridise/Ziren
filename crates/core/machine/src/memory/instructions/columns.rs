@@ -1,13 +1,16 @@
 use std::mem::size_of;
-use zkm_derive::AlignedBorrow;
-use zkm_stark::Word;
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
+use zkm_stark::{PicusInfo, Word};
 
-use crate::{memory::MemoryReadWriteCols, operations::KoalaBearWordRangeChecker};
+use crate::{
+    memory::MemoryReadWriteCols,
+    operations::{IsZeroOperation, KoalaBearWordRangeChecker},
+};
 
 pub const NUM_MEMORY_INSTRUCTIONS_COLUMNS: usize = size_of::<MemoryInstructionsColumns<u8>>();
 
 /// The column layout for memory.
-#[derive(AlignedBorrow, Default, Debug, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MemoryInstructionsColumns<T> {
     /// The current/next program counter of the instruction.
@@ -27,37 +30,51 @@ pub struct MemoryInstructionsColumns<T> {
     pub op_c_value: Word<T>,
 
     /// Whether this is a load byte instruction.
+    #[picus(selector)]
     pub is_lb: T,
     /// Whether this is a load byte unsigned instruction.
+    #[picus(selector)]
     pub is_lbu: T,
     /// Whether this is a load half instruction.
+    #[picus(selector)]
     pub is_lh: T,
     /// Whether this is a load half unsigned instruction.
+    #[picus(selector)]
     pub is_lhu: T,
     /// Whether this is a load word instruction.
+    #[picus(selector)]
     pub is_lw: T,
     /// Whether this is a lwl instruction.
+    #[picus(selector)]
     pub is_lwl: T,
     /// Whether this is a lwr instruction.
+    #[picus(selector)]
     pub is_lwr: T,
     /// Whether this is a ll instruction.
+    #[picus(selector)]
     pub is_ll: T,
     /// Whether this is a store byte instruction.
+    #[picus(selector)]
     pub is_sb: T,
     /// Whether this is a store half instruction.
+    #[picus(selector)]
     pub is_sh: T,
     /// Whether this is a store word instruction.
+    #[picus(selector)]
     pub is_sw: T,
     /// Whether this is a swl instruction.
+    #[picus(selector)]
     pub is_swl: T,
     /// Whether this is a swr instruction.
+    #[picus(selector)]
     pub is_swr: T,
     /// Whether this is a sc instruction.
+    #[picus(selector)]
     pub is_sc: T,
 
     /// The relationships among addr_word, addr_aligned, and addr_offset is as follows:
     /// addr_aligned = addr_word - addr_offset
-    /// addr_offset = addr_word % 4
+    /// addr_ls_two_bits = addr_word % 4
     /// Note that this all needs to be verified in the AIR
     pub addr_word: Word<T>,
 
@@ -73,12 +90,12 @@ pub struct MemoryInstructionsColumns<T> {
     /// Whether the least significant two bits of the address are three.
     pub ls_bits_is_three: T,
 
-    /// Gadget to verify that the address word is within the Baby-Bear field.
+    /// Gadget to verify that the address word is within the Koala-Bear field.
     pub addr_word_range_checker: KoalaBearWordRangeChecker<T>,
 
     /// Memory consistency columns for the memory access.
     pub memory_access: MemoryReadWriteCols<T>,
-    pub op_a_access: MemoryReadWriteCols<T>,
+    pub prev_a_val: Word<T>,
 
     /// Used for load memory instructions to store the unsigned memory value.
     pub unsigned_mem_val: Word<T>,
@@ -93,7 +110,8 @@ pub struct MemoryInstructionsColumns<T> {
     /// Flag for load memory instructions that contains bool value of
     /// (memory value is neg).
     pub mem_value_is_neg: T,
-    /// Flag for load memory instructions that contains bool value of
-    /// (memory value is pos).
-    pub mem_value_is_pos: T,
+
+    /// This is used to check if the most significant three bytes of the memory address are all
+    /// zero.
+    pub most_sig_bytes_zero: IsZeroOperation<T>,
 }

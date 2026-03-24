@@ -178,6 +178,7 @@ impl Program {
     }
 
     #[must_use]
+    #[inline]
     /// Fetch the instruction at the given program counter.
     pub fn fetch(&self, pc: u32) -> Instruction {
         let idx = ((pc - self.pc_base) / 4) as usize;
@@ -346,7 +347,7 @@ impl<F: PrimeField32> MachineProgram<F> for Program {
                 ];
                 let x_start =
                     SepticExtension::<F>::from_base_fn(|i| F::from_canonical_u32(values[i]));
-                let (point, _, _, _) = SepticCurve::<F>::lift_x(x_start);
+                let (point, _) = SepticCurve::<F>::lift_x(x_start);
                 SepticCurveComplete::Affine(point.neg())
             })
             .collect();

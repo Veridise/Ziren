@@ -132,9 +132,9 @@ pub fn generate_permutation_trace<F: PrimeField, EF: ExtensionField<F>>(
             assert_eq!(
                 prep.height(),
                 main.height(),
-                "preprocessed and main have different heights: main width = {}, preprocessed width = {}",
-                main.width(),
-                prep.width()
+                "preprocessed and main have different heights: main height = {}, preprocessed height = {}",
+                main.height(),
+                prep.height()
             );
             assert_eq!(
                 permutation_trace.height(),
@@ -266,7 +266,7 @@ pub fn eval_permutation_constraints<'a, F, AB>(
         // trace except the last column.
         for (entry, chunk) in perm_local[0..perm_local.len() - 1].iter().zip(lookup_chunks) {
             // First, we calculate the random linear combinations and multiplicities with the correct
-            // sign depending on wetther the lookup is a send or a receive.
+            // sign depending on whether the lookup is a send or a receive.
             let mut rlcs: Vec<AB::ExprEF> = Vec::with_capacity(batch_size);
             let mut multiplicities: Vec<AB::Expr> = Vec::with_capacity(batch_size);
             for (lookup, is_send) in chunk {
@@ -290,14 +290,14 @@ pub fn eval_permutation_constraints<'a, F, AB>(
             }
 
             // Now we can calculate the numerator and denominator of the combined batch.
-            let mut product = AB::ExprEF::ONE;
-            let mut numerator = AB::ExprEF::ZERO;
+            let mut product = AB::ExprEF::one();
+            let mut numerator = AB::ExprEF::zero();
             for (i, (m, rlc)) in multiplicities.into_iter().zip(rlcs.iter()).enumerate() {
                 // Calculate the running product of all rlcs.
                 product = product.clone() * rlc.clone();
 
                 // Calculate the product of all but the current rlc.
-                let mut all_but_current = AB::ExprEF::ONE;
+                let mut all_but_current = AB::ExprEF::one();
                 for other_rlc in
                     rlcs.iter().enumerate().filter(|(j, _)| i != *j).map(|(_, rlc)| rlc)
                 {
@@ -373,8 +373,9 @@ pub fn count_permutation_constraints<F: Field>(
         count += local_permutation_width - 1;
 
         // One assert that cumulative sum is initialized to `phi_local` on the first row.
-        // Two asserts that the cumulative sum is constrained to `phi_next - phi_local` on the transition
+        // One assert that the cumulative sum is constrained to `phi_next - phi_local` on the transition
         // rows.
+        // One assert that the cumulative sum on the last row matches `local_cumulative_sum`.
         count += 3;
     }
 

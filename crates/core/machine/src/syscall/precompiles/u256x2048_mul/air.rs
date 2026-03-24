@@ -3,6 +3,7 @@ use crate::{
     memory::{value_as_limbs, MemoryCols, MemoryReadCols, MemoryWriteCols},
     operations::field::field_op::FieldOpCols,
     utils::{limbs_from_access, pad_rows_fixed, words_to_bytes_le},
+    CoreChipError,
 };
 
 use num::{BigUint, One};
@@ -89,6 +90,7 @@ pub struct U256x2048MulCols<T> {
 impl<F: PrimeField32> MachineAir<F> for U256x2048MulChip {
     type Record = ExecutionRecord;
     type Program = Program;
+    type Error = CoreChipError;
 
     fn name(&self) -> String {
         "U256XU2048Mul".to_string()
@@ -98,7 +100,7 @@ impl<F: PrimeField32> MachineAir<F> for U256x2048MulChip {
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Implement trace generation logic.
         let rows_and_records = input
             .get_precompile_events(SyscallCode::U256XU2048_MUL)
@@ -229,7 +231,7 @@ impl<F: PrimeField32> MachineAir<F> for U256x2048MulChip {
         );
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_COLS)
+        Ok(RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_COLS))
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -307,7 +309,7 @@ where
         // Evaluate the memory accesses for lo_memory and hi_memory.
         builder.eval_memory_access_slice(
             local.shard,
-            local.clk.into() + AB::Expr::ONE,
+            local.clk.into() + AB::Expr::one(),
             local.lo_ptr,
             &local.lo_memory,
             local.is_real,
@@ -315,7 +317,7 @@ where
 
         builder.eval_memory_access_slice(
             local.shard,
-            local.clk.into() + AB::Expr::ONE,
+            local.clk.into() + AB::Expr::one(),
             local.hi_ptr,
             &local.hi_memory,
             local.is_real,
@@ -332,8 +334,8 @@ where
             .collect::<Vec<_>>();
 
         let mut coeff_2_256 = Vec::new();
-        coeff_2_256.resize(32, AB::Expr::ZERO);
-        coeff_2_256.push(AB::Expr::ONE);
+        coeff_2_256.resize(32, AB::Expr::zero());
+        coeff_2_256.push(AB::Expr::one());
         let modulus_polynomial: Polynomial<AB::Expr> = Polynomial::from_coefficients(&coeff_2_256);
 
         // Evaluate that each of the mul and carry columns are valid.
@@ -352,7 +354,7 @@ where
             builder,
             &a_limbs,
             &b_limb_array[0],
-            &Polynomial::from_coefficients(&[AB::Expr::ZERO]), // Zero polynomial for no previous carry
+            &Polynomial::from_coefficients(&[AB::Expr::zero()]), // Zero polynomial for no previous carry
             &modulus_polynomial,
             local.is_real,
         );

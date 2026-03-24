@@ -56,7 +56,7 @@ impl<F: Field> Add5Operation<F> {
         let e = e_u32.to_le_bytes();
 
         let base = 256;
-        let mut carry = [0u8, 0u8, 0u8, 0u8, 0u8];
+        let mut carry = [0u8; WORD_SIZE];
         for i in 0..WORD_SIZE {
             let mut res =
                 (a[i] as u32) + (b[i] as u32) + (c[i] as u32) + (d[i] as u32) + (e[i] as u32);
@@ -115,14 +115,14 @@ impl<F: Field> Add5Operation<F> {
                         + cols.is_carry_2[i]
                         + cols.is_carry_3[i]
                         + cols.is_carry_4[i],
-                    AB::Expr::ONE,
+                    AB::Expr::one(),
                 );
             }
         }
 
         // Calculates carry from is_carry_{0,1,2,3,4}.
         {
-            let one = AB::Expr::ONE;
+            let one = AB::Expr::one();
             let two = AB::F::from_canonical_u32(2);
             let three = AB::F::from_canonical_u32(3);
             let four = AB::F::from_canonical_u32(4);

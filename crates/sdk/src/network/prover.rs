@@ -64,7 +64,7 @@ impl NetworkProver {
         );
         let ssl_cert_path = env::var("SSL_CERT_PATH").ok();
         let ssl_key_path = env::var("SSL_KEY_PATH").ok();
-        let ssl_config = if ca_cert_path.as_ref().is_none() {
+        let ssl_config = if ssl_cert_path.is_none() || ssl_key_path.is_none() {
             None
         } else {
             let (ca_cert, identity) = get_cert_and_identity(
@@ -143,6 +143,12 @@ impl NetworkProver {
         let max_prover_num =
             env::var("MAX_PROVER_NUM").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
 
+        // Single-node mode
+        // When enabled, the proving process runs entirely on one node,
+        // without splitting into multiple tasks.
+        let single_node =
+            env::var("SINGLE_NODE").ok().and_then(|s| s.parse::<bool>().ok()).unwrap_or(false);
+
         let from_step =
             if kind == ZKMProofKind::CompressToGroth16 { Some(Step::InAgg.into()) } else { None };
 
@@ -164,6 +170,7 @@ impl NetworkProver {
             from_step,
             receipt_inputs: input.receipts,
             max_prover_num,
+            single_node,
             ..Default::default()
         };
 
@@ -198,7 +205,7 @@ impl NetworkProver {
             match Status::from_i32(get_status_response.status) {
                 Some(Status::Computing) => {
                     match Step::from_i32(get_status_response.step) {
-                        Some(step) => log::info!("Generate_proof: {step}"),
+                        Some(step) => log::info!("proof_id: {proof_id}, step: {step}"),
                         None => todo!(),
                     }
                     sleep(Duration::from_millis(self.poll_interval)).await;
@@ -218,14 +225,21 @@ impl NetworkProver {
                         serde_json::from_slice(&get_status_response.proof_with_public_inputs)
                             .expect("Failed to deserialize proof");
                     let cycles = get_status_response.total_steps;
+                    let proving_time = get_status_response.proving_time;
                     tracing::info!(
-                        "Proof generation completed successfully, proof_id: {proof_id}, cycles: {cycles}"
+                        "Proof generation completed successfully, proof_id: {proof_id}, cycles: {cycles}, proving time: {proving_time}ms"
                     );
                     return Ok((proof, public_values, cycles));
                 }
                 _ => {
-                    log::error!("generate_proof failed status: {}", get_status_response.status);
-                    bail!("generate_proof failed status: {}", get_status_response.status);
+                    log::error!(
+                        "generate_proof failed status: {}, proof_id: {proof_id}",
+                        get_status_response.status
+                    );
+                    bail!(
+                        "generate_proof failed status: {}, proof_id: {proof_id}",
+                        get_status_response.status
+                    );
                 }
             }
         }
@@ -273,7 +287,6 @@ impl NetworkProver {
             ZKMProofWithPublicValues {
                 proof,
                 public_values,
-                stdin,
                 zkm_version: ZKM_CIRCUIT_VERSION.to_string(),
             },
             cycles,

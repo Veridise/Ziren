@@ -9,9 +9,12 @@ use zkm_core_executor::{
     events::{BranchEvent, ByteLookupEvent, ByteRecord},
     ExecutionRecord, Opcode, Program,
 };
-use zkm_stark::{air::MachineAir, Word};
+use zkm_stark::{air::MachineAir, PicusInfo, Word};
 
-use crate::utils::{next_power_of_two, zeroed_f_vec};
+use crate::{
+    utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
+};
 
 use super::{BranchChip, BranchColumns, NUM_BRANCH_COLS};
 
@@ -20,15 +23,21 @@ impl<F: PrimeField32> MachineAir<F> for BranchChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "Branch".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        BranchColumns::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         let chunk_size = std::cmp::max((input.branch_events.len()) / num_cpus::get(), 1);
         let nb_rows = input.branch_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -57,7 +66,7 @@ impl<F: PrimeField32> MachineAir<F> for BranchChip {
         output.add_byte_lookup_events_from_maps(blu_events.iter().collect_vec());
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(values, NUM_BRANCH_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_BRANCH_COLS))
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -79,7 +88,7 @@ impl BranchChip {
         &self,
         event: &BranchEvent,
         cols: &mut BranchColumns<F>,
-        _blu: &mut HashMap<ByteLookupEvent, usize>,
+        blu: &mut HashMap<ByteLookupEvent, usize>,
     ) {
         cols.pc = F::from_canonical_u32(event.pc);
         cols.is_beq = F::from_bool(matches!(event.opcode, Opcode::BEQ));
@@ -117,7 +126,10 @@ impl BranchChip {
         cols.next_next_pc = Word::from(event.next_next_pc);
         cols.next_pc_range_checker.populate(event.next_pc);
         cols.next_next_pc_range_checker.populate(event.next_next_pc);
-
         cols.is_branching = F::from_bool(branching);
+        if !branching {
+            blu.add_u8_range_checks(&event.next_pc.to_le_bytes());
+            blu.add_u8_range_checks(&event.next_next_pc.to_le_bytes());
+        }
     }
 }

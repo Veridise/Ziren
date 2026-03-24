@@ -7,12 +7,15 @@ use p3_matrix::dense::RowMajorMatrix;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use zkm_core_executor::{
     events::{ByteLookupEvent, ByteRecord, MemInstrEvent},
-    ByteOpcode, ExecutionRecord, Opcode, Program,
+    ByteOpcode, ExecutionRecord, Opcode, Program, NUM_REGISTERS,
 };
 use zkm_primitives::consts::WORD_SIZE;
 use zkm_stark::air::MachineAir;
 
-use crate::utils::{next_power_of_two, zeroed_f_vec};
+use crate::{
+    utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
+};
 
 use super::{
     columns::{MemoryInstructionsColumns, NUM_MEMORY_INSTRUCTIONS_COLUMNS},
@@ -24,15 +27,21 @@ impl<F: PrimeField32> MachineAir<F> for MemoryInstructionsChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "MemoryInstrs".to_string()
+    }
+
+    fn picus_info(&self) -> zkm_stark::PicusInfo {
+        MemoryInstructionsColumns::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         let chunk_size = std::cmp::max((input.memory_instr_events.len()) / num_cpus::get(), 1);
         let nb_rows = input.memory_instr_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -63,7 +72,7 @@ impl<F: PrimeField32> MachineAir<F> for MemoryInstructionsChip {
         output.add_byte_lookup_events_from_maps(blu_events.iter().collect_vec());
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(values, NUM_MEMORY_INSTRUCTIONS_COLUMNS)
+        Ok(RowMajorMatrix::new(values, NUM_MEMORY_INSTRUCTIONS_COLUMNS))
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -97,7 +106,7 @@ impl MemoryInstructionsChip {
 
         // Populate memory accesses for reading from memory.
         cols.memory_access.populate(event.mem_access, blu);
-        cols.op_a_access.populate(event.op_a_access, &mut Vec::new());
+        cols.prev_a_val = event.prev_a_val.into();
 
         // Populate addr_word and addr_aligned columns.
         let memory_addr = event.b.wrapping_add(event.c);
@@ -163,7 +172,7 @@ impl MemoryInstructionsChip {
                     //    (rt & (!mask)) | val
                     let val = mem_value << (24 - addr_ls_two_bits * 8);
                     let mask = 0xFFFFFFFF_u32 << (24 - addr_ls_two_bits * 8);
-                    cols.unsigned_mem_val = ((mem_value & (!mask)) | val).into();
+                    cols.unsigned_mem_val = ((event.prev_a_val & (!mask)) | val).into();
                 }
                 Opcode::LWR => {
                     // LWR:
@@ -172,7 +181,7 @@ impl MemoryInstructionsChip {
                     //     (rt & (!mask)) | val
                     let val = mem_value >> (addr_ls_two_bits * 8);
                     let mask = 0xFFFFFFFF_u32 >> (addr_ls_two_bits * 8);
-                    cols.unsigned_mem_val = ((mem_value & (!mask)) | val).into();
+                    cols.unsigned_mem_val = ((event.prev_a_val & (!mask)) | val).into();
                 }
                 Opcode::LL => {
                     cols.unsigned_mem_val = mem_value.into();
@@ -204,12 +213,6 @@ impl MemoryInstructionsChip {
                     c: 0,
                 });
             }
-
-            // Set the `mem_value_is_pos` composite flag.
-            cols.mem_value_is_pos = F::from_bool(
-                (matches!(event.opcode, Opcode::LB | Opcode::LH) && (cols.most_sig_bit == F::ZERO))
-                    || matches!(event.opcode, Opcode::LBU | Opcode::LHU | Opcode::LW | Opcode::LL),
-            )
         }
 
         cols.is_lb = F::from_bool(matches!(event.opcode, Opcode::LB));
@@ -236,5 +239,18 @@ impl MemoryInstructionsChip {
             b: addr_bytes[1],
             c: addr_bytes[2],
         });
+
+        cols.most_sig_bytes_zero
+            .populate_from_field_element(cols.addr_word[1] + cols.addr_word[2] + cols.addr_word[3]);
+
+        if cols.most_sig_bytes_zero.result == F::one() {
+            blu.add_byte_lookup_event(ByteLookupEvent {
+                opcode: ByteOpcode::LTU,
+                a1: 1,
+                a2: 0,
+                b: NUM_REGISTERS as u8 - 1,
+                c: cols.addr_word[0].as_canonical_u32() as u8,
+            });
+        }
     }
 }

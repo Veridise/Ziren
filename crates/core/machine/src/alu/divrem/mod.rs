@@ -75,10 +75,13 @@ use zkm_core_executor::{
     Program,
 };
 
-use crate::memory::MemoryReadWriteCols;
-use zkm_derive::AlignedBorrow;
+use crate::{memory::MemoryReadWriteCols, CoreChipError};
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
 use zkm_primitives::consts::WORD_SIZE;
-use zkm_stark::{air::MachineAir, Word};
+use zkm_stark::{
+    air::{MachineAir, PicusInfo},
+    Word,
+};
 
 use crate::{
     air::{WordAirBuilder, ZKMCoreAirBuilder},
@@ -101,7 +104,7 @@ const LONG_WORD_SIZE: usize = 2 * WORD_SIZE;
 pub struct DivRemChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Debug, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct DivRemCols<T> {
     /// The current/next pc, used for instruction lookup table.
@@ -139,15 +142,19 @@ pub struct DivRemCols<T> {
     pub is_c_0: IsZeroWordOperation<T>,
 
     /// Flag to indicate whether the opcode is DIV.
+    #[picus(selector)]
     pub is_div: T,
 
     /// Flag to indicate whether the opcode is DIVU.
+    #[picus(selector)]
     pub is_divu: T,
 
     /// Flag to indicate whether the opcode is MOD.
+    #[picus(selector)]
     pub is_mod: T,
 
     /// Flag to indicate whether the opcode is MODU.
+    #[picus(selector)]
     pub is_modu: T,
 
     /// Flag to indicate whether the division operation overflows.
@@ -201,15 +208,21 @@ impl<F: PrimeField32> MachineAir<F> for DivRemChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "DivRem".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        DivRemCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Generate the trace rows for each event.
         let mut rows: Vec<[F; NUM_DIVREM_COLS]> = vec![];
         let divrem_events = input.divrem_events.clone();
@@ -344,7 +357,7 @@ impl<F: PrimeField32> MachineAir<F> for DivRemChip {
             input.fixed_log2_rows::<F, _>(self),
         );
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_DIVREM_COLS)
+        Ok(RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_DIVREM_COLS))
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -607,7 +620,7 @@ where
             // - If is_real == 1 then is_c_0_result must be the expected one, so
             //   remainder_check_multiplicity = (1 - is_c_0_result) * is_real.
             builder.assert_eq(
-                (AB::Expr::ONE - local.is_c_0.result) * is_real.clone(),
+                (AB::Expr::one() - local.is_c_0.result) * is_real.clone(),
                 local.remainder_check_multiplicity,
             );
 
@@ -696,38 +709,38 @@ where
                 local.clk,
                 local.pc,
                 local.next_pc,
-                AB::Expr::ZERO,
+                local.next_pc + AB::Expr::from_canonical_u32(4),
+                AB::Expr::zero(),
                 opcode.clone(),
                 local.quotient,
                 local.b,
                 local.c,
                 local.remainder,
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ONE,
-                AB::Expr::ZERO,
-                AB::Expr::ONE,
+                AB::Expr::zero(),
+                AB::Expr::zero(),
+                AB::Expr::one(),
+                AB::Expr::zero(),
+                AB::Expr::one(),
                 local.is_div + local.is_divu,
             );
 
             builder.receive_instruction(
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
+                AB::Expr::zero(),
+                AB::Expr::zero(),
                 local.pc,
                 local.next_pc,
-                AB::Expr::ZERO,
+                local.next_pc + AB::Expr::from_canonical_u32(4),
+                AB::Expr::zero(),
                 opcode,
                 local.remainder,
                 local.b,
                 local.c,
-                Word([AB::Expr::ZERO; 4]),
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ZERO,
-                AB::Expr::ONE,
+                Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+                AB::Expr::zero(),
+                AB::Expr::zero(),
+                AB::Expr::zero(),
+                AB::Expr::zero(),
+                AB::Expr::one(),
                 local.is_mod + local.is_modu,
             );
 
@@ -761,7 +774,7 @@ mod tests {
         shard.divrem_events = vec![CompAluEvent::new(0, Opcode::DIVU, 2, 17, 3)];
         let chip = DivRemChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         println!("{:?}", trace.values)
     }
 }

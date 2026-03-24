@@ -22,10 +22,10 @@ use zkm_core_executor::{
     events::{ByteLookupEvent, ByteRecord},
     ByteOpcode, ExecutionRecord, Opcode, Program,
 };
-use zkm_derive::AlignedBorrow;
-use zkm_stark::{air::MachineAir, Word};
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
+use zkm_stark::{air::MachineAir, PicusInfo, Word};
 
-use crate::{air::ZKMCoreAirBuilder, utils::pad_rows_fixed};
+use crate::{air::ZKMCoreAirBuilder, utils::pad_rows_fixed, CoreChipError};
 
 /// The number of main trace columns for `CloClzChip`.
 pub const NUM_CLOCLZ_COLS: usize = size_of::<CloClzCols<u8>>();
@@ -39,7 +39,7 @@ const BYTE_SIZE: usize = 8;
 pub struct CloClzChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Debug, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct CloClzCols<T> {
     /// The current/next pc, used for instruction lookup table.
@@ -63,9 +63,11 @@ pub struct CloClzCols<T> {
     pub sr1: Word<T>,
 
     /// Flag to indicate whether the opcode is CLZ.
+    #[picus(selector)]
     pub is_clz: T,
 
     /// Flag to indicate whether the opcode is CLO.
+    #[picus(selector)]
     pub is_clo: T,
 
     /// Selector to know whether this row is enabled.
@@ -77,15 +79,21 @@ impl<F: PrimeField32> MachineAir<F> for CloClzChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "CloClz".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        CloClzCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Generate the trace rows for each event.
         let mut rows: Vec<[F; NUM_CLOCLZ_COLS]> = vec![];
         let cloclz_events = input.cloclz_events.clone();
@@ -154,7 +162,7 @@ impl<F: PrimeField32> MachineAir<F> for CloClzChip {
             trace.values[i] = padded_row_template[i % NUM_CLOCLZ_COLS];
         }
 
-        trace
+        Ok(trace)
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -212,22 +220,22 @@ where
             + local.is_clz * Opcode::CLZ.as_field::<AB::F>();
 
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc,
-            AB::Expr::ZERO,
+            local.next_pc + AB::Expr::from_canonical_u32(4),
+            AB::Expr::zero(),
             cpu_opcode,
             local.a,
             local.b,
-            Word([AB::Expr::ZERO; 4]),
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ONE,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::one(),
             local.is_real,
         );
 
@@ -236,6 +244,7 @@ where
             builder.assert_bool(local.is_bb_zero);
 
             builder.when(local.is_bb_zero).assert_zero(local.bb.reduce::<AB>());
+            builder.when(local.is_bb_zero).assert_zero(local.bb[3]);
 
             builder.when(local.is_bb_zero).assert_eq(local.a[0], AB::Expr::from_canonical_u32(32));
         }
@@ -259,6 +268,7 @@ where
         // if bb!=0, check sr1 == 1
         {
             builder.when_not(local.is_bb_zero).assert_one(local.sr1.reduce::<AB>());
+            builder.when_not(local.is_bb_zero).assert_zero(local.sr1[3]);
         }
 
         builder.assert_bool(local.is_clo);
@@ -292,7 +302,7 @@ mod tests {
         ];
         let chip = CloClzChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         println!("{:?}", trace.values)
     }
 
@@ -324,7 +334,7 @@ mod tests {
         shard.cloclz_events = cloclz_events;
         let chip = CloClzChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         let proof =
             uni_stark_prove::<KoalaBearPoseidon2, _>(&config, &chip, &mut challenger, trace);
 

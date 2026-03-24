@@ -26,7 +26,6 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        mpsc::sync_channel,
         Arc, Mutex, OnceLock,
     },
     thread,
@@ -73,8 +72,10 @@ use zkm_recursion_core::{
     stark::KoalaBearPoseidon2Outer,
     RecursionProgram, Runtime as RecursionRuntime,
 };
-pub use zkm_recursion_gnark_ffi::proof::{Groth16Bn254Proof, PlonkBn254Proof};
-use zkm_recursion_gnark_ffi::{groth16_bn254::Groth16Bn254Prover, plonk_bn254::PlonkBn254Prover};
+pub use zkm_recursion_gnark_ffi::proof::{DvSnarkBn254Proof, Groth16Bn254Proof, PlonkBn254Proof};
+use zkm_recursion_gnark_ffi::{
+    groth16_bn254::Groth16Bn254Prover, plonk_bn254::PlonkBn254Prover, DvSnarkBn254Prover,
+};
 use zkm_stark::{
     air::PublicValues, koala_bear_poseidon2::KoalaBearPoseidon2, Challenge, MachineProver,
     ShardProof, StarkGenericConfig, StarkVerifyingKey, Val, Word, ZKMCoreOpts, ZKMProverOpts,
@@ -98,6 +99,11 @@ pub type InnerSC = KoalaBearPoseidon2;
 /// The configuration for the outer prover.
 pub type OuterSC = KoalaBearPoseidon2Outer;
 
+pub type DeviceProvingKey<C> = <<C as ZKMProverComponents>::CoreProver as MachineProver<
+    KoalaBearPoseidon2,
+    MipsAir<KoalaBear>,
+>>::DeviceProvingKey;
+
 const COMPRESS_DEGREE: usize = 3;
 const SHRINK_DEGREE: usize = 3;
 const WRAP_DEGREE: usize = 9;
@@ -117,7 +123,7 @@ pub type CompressAir<F> = RecursionAir<F, COMPRESS_DEGREE>;
 pub type ShrinkAir<F> = RecursionAir<F, SHRINK_DEGREE>;
 pub type WrapAir<F> = RecursionAir<F, WRAP_DEGREE>;
 
-/// A end-to-end prover implementation for the Ziren zkVM.
+/// An end-to-end prover implementation for the Ziren zkVM.
 pub struct ZKMProver<C: ZKMProverComponents = DefaultProverComponents> {
     /// The machine used for proving the core step.
     pub core_prover: C::CoreProver,
@@ -277,7 +283,10 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
 
     /// Creates a proving key and a verifying key for a given MIPS ELF.
     #[instrument(name = "setup", level = "debug", skip_all)]
-    pub fn setup(&self, elf: &[u8]) -> (ZKMProvingKey, ZKMVerifyingKey) {
+    pub fn setup(
+        &self,
+        elf: &[u8],
+    ) -> (ZKMProvingKey, DeviceProvingKey<C>, Program, ZKMVerifyingKey) {
         let program = self.get_program(elf).unwrap();
         let (pk, vk) = self.core_prover.setup(&program);
         let vk = ZKMVerifyingKey { vk };
@@ -286,7 +295,8 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
             elf: elf.to_vec(),
             vk: vk.clone(),
         };
-        (pk, vk)
+        let pk_d = self.core_prover.pk_to_device(&pk.pk);
+        (pk, pk_d, program, vk)
     }
 
     /// Get a program with an allowed preprocessed shape.
@@ -323,18 +333,21 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
     #[instrument(name = "prove_core", level = "info", skip_all)]
     pub fn prove_core<'a>(
         &'a self,
-        pk: &ZKMProvingKey,
+        pk_d: &<<C as ZKMProverComponents>::CoreProver as MachineProver<
+            KoalaBearPoseidon2,
+            MipsAir<KoalaBear>,
+        >>::DeviceProvingKey,
+        program: Program,
         stdin: &ZKMStdin,
         opts: ZKMProverOpts,
         mut context: ZKMContext<'a>,
     ) -> Result<ZKMCoreProof, ZKMCoreProverError> {
         context.subproof_verifier = Some(self);
-        let program = self.get_program(&pk.elf).unwrap();
-        let pk = self.core_prover.pk_to_device(&pk.pk);
+        let pk = pk_d;
         let (proof, public_values_stream, cycles) =
             zkm_core_machine::utils::prove_with_context::<_, C::CoreProver>(
                 &self.core_prover,
-                &pk,
+                pk,
                 program,
                 stdin,
                 opts.core_opts,
@@ -597,7 +610,7 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
         inputs
     }
 
-    /// Reduce shards proofs to a single shard proof using the recursion prover.
+    /// Reduce shard proofs to a single shard proof using the recursion prover.
     #[instrument(name = "compress", level = "info", skip_all)]
     pub fn compress(
         &self,
@@ -632,9 +645,10 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
 
             // Spawn a worker that sends the first layer inputs to a bounded channel.
             let input_sync = Arc::new(TurnBasedSync::new());
-            let (input_tx, input_rx) = sync_channel::<(usize, usize, ZKMCircuitWitness)>(
-                opts.recursion_opts.checkpoints_channel_capacity,
-            );
+            let (input_tx, input_rx) =
+                crossbeam_channel::bounded::<(usize, usize, ZKMCircuitWitness)>(
+                    opts.recursion_opts.checkpoints_channel_capacity,
+                );
             let input_tx = Arc::new(Mutex::new(input_tx));
             {
                 let input_tx = Arc::clone(&input_tx);
@@ -651,7 +665,7 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
             // Spawn workers who generate the records and traces.
             let record_and_trace_sync = Arc::new(TurnBasedSync::new());
             let (record_and_trace_tx, record_and_trace_rx) =
-                sync_channel::<(
+                crossbeam_channel::bounded::<(
                     usize,
                     usize,
                     Arc<RecursionProgram<KoalaBear>>,
@@ -719,18 +733,37 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
 
                             // Generate the dependencies.
                             let mut records = vec![record];
-                            tracing::debug_span!("generate dependencies").in_scope(|| {
-                                self.compress_prover.machine().generate_dependencies(
+                            tracing::debug_span!("generate dependencies").in_scope(|| -> Result<(), ZKMRecursionProverError> {
+                                match self.compress_prover.machine().generate_dependencies(
                                     &mut records,
                                     &opts.recursion_opts,
                                     None,
-                                )
-                            });
+                                ) {
+                                    Ok(_) => Ok(()),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to generate dependencies for recursion proof: {}",
+                                            e
+                                        );
+                                        Err(ZKMRecursionProverError::DependenciesGenerationError)
+                                    }
+                                }
+                            })?;
 
                             // Generate the traces.
                             let record = records.into_iter().next().unwrap();
                             let traces = tracing::debug_span!("generate traces")
                                 .in_scope(|| self.compress_prover.generate_traces(&record));
+                            let traces = match traces {
+                                Ok(traces) => traces,
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to generate traces for recursion proof: {}",
+                                        e
+                                    );
+                                    return Err(ZKMRecursionProverError::TracesGenerationError);
+                                }
+                            };
 
                             // Wait for our turn to update the state.
                             record_and_trace_sync.wait_for_turn(index);
@@ -745,7 +778,7 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
                             // Advance the turn.
                             record_and_trace_sync.advance_turn();
                         } else {
-                            break;
+                            break Ok(());
                         }
                     }
                 });
@@ -753,10 +786,12 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
 
             // Spawn workers who generate the compress proofs.
             let proofs_sync = Arc::new(TurnBasedSync::new());
-            let (proofs_tx, proofs_rx) =
-                sync_channel::<(usize, usize, StarkVerifyingKey<InnerSC>, ShardProof<InnerSC>)>(
-                    num_first_layer_inputs * 2,
-                );
+            let (proofs_tx, proofs_rx) = crossbeam_channel::bounded::<(
+                usize,
+                usize,
+                StarkVerifyingKey<InnerSC>,
+                ShardProof<InnerSC>,
+            )>(num_first_layer_inputs * 2);
             let proofs_tx = Arc::new(Mutex::new(proofs_tx));
             let proofs_rx = Arc::new(Mutex::new(proofs_rx));
             let mut prover_handles = Vec::new();
@@ -1096,6 +1131,30 @@ impl<C: ZKMProverComponents> ZKMProver<C> {
         proof
     }
 
+    /// Wrap the STARK proven over a SNARK-friendly field into a DV-SNARK proof.
+    #[instrument(name = "wrap_dvsnark_bn254", level = "info", skip_all)]
+    pub fn wrap_dvsnark_bn254(
+        &self,
+        proof: ZKMReduceProof<OuterSC>,
+        build_dir: &Path,
+        store_dir: &Path,
+    ) -> DvSnarkBn254Proof {
+        let input = ZKMCompressWitnessValues {
+            vks_and_proofs: vec![(proof.vk.clone(), proof.proof.clone())],
+            is_complete: true,
+        };
+        let vkey_hash = zkm_vkey_digest_bn254(&proof);
+        let committed_values_digest = zkm_committed_values_digest_bn254(&proof);
+
+        let mut witness = Witness::default();
+        input.write(&mut witness);
+        witness.write_committed_values_digest(committed_values_digest);
+        witness.write_vkey_hash(vkey_hash);
+
+        let prover = DvSnarkBn254Prover::new();
+        prover.prove(witness, build_dir.to_path_buf(), store_dir.to_path_buf())
+    }
+
     /// Accumulate deferred proofs into a single digest.
     pub fn hash_deferred_proofs(
         prev_digest: [Val<CoreSC>; DIGEST_SIZE],
@@ -1267,10 +1326,10 @@ pub mod tests {
         let context = ZKMContext::default();
 
         tracing::info!("setup elf");
-        let (pk, vk) = prover.setup(elf);
+        let (_, pk_d, program, vk) = prover.setup(elf);
 
         tracing::info!("prove core");
-        let core_proof = prover.prove_core(&pk, &stdin, opts, context)?;
+        let core_proof = prover.prove_core(&pk_d, program, &stdin, opts, context)?;
         let public_values = core_proof.public_values.clone();
 
         if env::var("COLLECT_SHAPES").is_ok() {
@@ -1352,11 +1411,14 @@ pub mod tests {
         let vk_digest_bn254 = zkm_vkey_digest_bn254(&wrapped_bn254_proof);
         assert_eq!(vk_digest_bn254, vk.hash_bn254());
 
-        tracing::info!("Test the outer Plonk circuit");
+        tracing::info!("Test the outer circuit");
         let (constraints, witness) =
             build_constraints_and_witness(&wrapped_bn254_proof.vk, &wrapped_bn254_proof.proof);
-        PlonkBn254Prover::test(constraints, witness);
-        tracing::info!("Circuit test succeeded");
+        // test
+        PlonkBn254Prover::test(constraints.clone(), witness.clone());
+        tracing::info!("Circuit PLONK test succeeded");
+        Groth16Bn254Prover::test(constraints, witness);
+        tracing::info!("Circuit GROTH16 test succeeded");
 
         if test_kind == Test::CircuitTest {
             return Ok(());
@@ -1406,16 +1468,22 @@ pub mod tests {
         let prover = ZKMProver::<C>::new();
 
         tracing::info!("setup keccak elf");
-        let (keccak_pk, keccak_vk) = prover.setup(keccak_elf);
+        let (_, keccak_pk_d, keccak_program, keccak_vk) = prover.setup(keccak_elf);
 
         tracing::info!("setup verify elf");
-        let (verify_pk, verify_vk) = prover.setup(verify_elf);
+        let (_, verify_pk_d, verify_program, verify_vk) = prover.setup(verify_elf);
 
         tracing::info!("prove subproof 1");
         let mut stdin = ZKMStdin::new();
         stdin.write(&1usize);
         stdin.write(&vec![0u8, 0, 0]);
-        let deferred_proof_1 = prover.prove_core(&keccak_pk, &stdin, opts, Default::default())?;
+        let deferred_proof_1 = prover.prove_core(
+            &keccak_pk_d,
+            keccak_program.clone(),
+            &stdin,
+            opts,
+            Default::default(),
+        )?;
         let pv_1 = deferred_proof_1.public_values.as_slice().to_vec().clone();
 
         // Generate a second proof of keccak of various inputs.
@@ -1425,7 +1493,8 @@ pub mod tests {
         stdin.write(&vec![0u8, 1, 2]);
         stdin.write(&vec![2, 3, 4]);
         stdin.write(&vec![5, 6, 7]);
-        let deferred_proof_2 = prover.prove_core(&keccak_pk, &stdin, opts, Default::default())?;
+        let deferred_proof_2 =
+            prover.prove_core(&keccak_pk_d, keccak_program, &stdin, opts, Default::default())?;
         let pv_2 = deferred_proof_2.public_values.as_slice().to_vec().clone();
 
         // Generate recursive proof of first subproof.
@@ -1452,7 +1521,8 @@ pub mod tests {
         stdin.write_proof(deferred_reduce_2.clone(), keccak_vk.vk.clone());
 
         tracing::info!("proving verify program (core)");
-        let verify_proof = prover.prove_core(&verify_pk, &stdin, opts, Default::default())?;
+        let verify_proof =
+            prover.prove_core(&verify_pk_d, verify_program, &stdin, opts, Default::default())?;
         // let public_values = verify_proof.public_values.clone();
 
         // Generate recursive proof of verify program

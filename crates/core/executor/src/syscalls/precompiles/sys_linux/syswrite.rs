@@ -3,7 +3,7 @@ use std::vec;
 use crate::{
     events::{LinuxEvent, PrecompileEvent},
     syscalls::{write::write_fd, Syscall, SyscallCode, SyscallContext},
-    Register,
+    ExecutionError, Register,
 };
 
 pub(crate) struct SysWriteSyscall;
@@ -19,18 +19,18 @@ impl Syscall for SysWriteSyscall {
         syscall_code: SyscallCode,
         a0: u32,
         a1: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let start_clk = rt.clk;
         let a2 = Register::A2;
-        let (record, v0) = rt.mr(a2 as u32);
+        let (record, v0) = rt.rr_traced(a2);
         let fd = a0;
         let write_buf = a1;
         let nbytes = v0;
         let bytes = (0..nbytes).map(|i| rt.rt.byte(write_buf + i)).collect::<Vec<u8>>();
         let slice = bytes.as_slice();
-        write_fd(rt, fd, slice);
+        write_fd(rt, fd, slice)?;
 
-        let a3_record = rt.mw(Register::A3 as u32, 0);
+        let a3_record = rt.rw_traced(Register::A3, 0);
         let shard = rt.current_shard();
         let event = PrecompileEvent::Linux(LinuxEvent {
             shard,
@@ -46,6 +46,6 @@ impl Syscall for SysWriteSyscall {
         let syscall_event =
             rt.rt.syscall_event(start_clk, None, rt.next_pc, syscall_code.syscall_id(), a0, a1);
         rt.add_precompile_event(SyscallCode::SYS_LINUX, syscall_event, event);
-        Some(v0)
+        Ok(Some(v0))
     }
 }

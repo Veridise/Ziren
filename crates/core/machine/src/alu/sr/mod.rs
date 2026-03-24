@@ -57,15 +57,16 @@ use zkm_core_executor::{
     events::{AluEvent, ByteLookupEvent, ByteRecord},
     ByteOpcode, ExecutionRecord, Opcode, Program,
 };
-use zkm_derive::AlignedBorrow;
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
 use zkm_primitives::consts::WORD_SIZE;
-use zkm_stark::{air::MachineAir, Word};
+use zkm_stark::{air::MachineAir, PicusInfo, Word};
 
 use crate::{
     air::ZKMCoreAirBuilder,
     alu::sr::utils::{nb_bits_to_shift, nb_bytes_to_shift},
     bytes::utils::shr_carry,
     utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
 };
 
 /// The number of main trace columns for `ShiftRightChip`.
@@ -82,7 +83,7 @@ const BYTE_SIZE: usize = 8;
 pub struct ShiftRightChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Debug, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ShiftRightCols<T> {
     /// The current/next pc, used for instruction lookup table.
@@ -123,12 +124,15 @@ pub struct ShiftRightCols<T> {
     pub c_least_sig_byte: [T; BYTE_SIZE],
 
     /// If the opcode is SRL.
+    #[picus(selector)]
     pub is_srl: T,
 
     /// If the opcode is ROR.
+    #[picus(selector)]
     pub is_ror: T,
 
     /// If the opcode is SRA.
+    #[picus(selector)]
     pub is_sra: T,
 
     /// Selector to know whether this row is enabled.
@@ -140,15 +144,21 @@ impl<F: PrimeField32> MachineAir<F> for ShiftRightChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "ShiftRight".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        ShiftRightCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         _: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         // Generate the trace rows for each event.
         let nb_rows = input.shift_right_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -175,10 +185,14 @@ impl<F: PrimeField32> MachineAir<F> for ShiftRightChip {
         );
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(values, NUM_SHIFT_RIGHT_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_SHIFT_RIGHT_COLS))
     }
 
-    fn generate_dependencies(&self, input: &Self::Record, output: &mut Self::Record) {
+    fn generate_dependencies(
+        &self,
+        input: &Self::Record,
+        output: &mut Self::Record,
+    ) -> Result<(), Self::Error> {
         let chunk_size = std::cmp::max(input.shift_right_events.len() / num_cpus::get(), 1);
 
         let blu_batches = input
@@ -196,6 +210,7 @@ impl<F: PrimeField32> MachineAir<F> for ShiftRightChip {
             .collect::<Vec<_>>();
 
         output.add_byte_lookup_events_from_maps(blu_batches.iter().collect_vec());
+        Ok(())
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -345,7 +360,7 @@ where
         // Calculate the number of bits and bytes to shift by from c.
         {
             // The sum of c_least_sig_byte[i] * 2^i must match c[0].
-            let mut c_byte_sum = AB::Expr::ZERO;
+            let mut c_byte_sum = AB::Expr::zero();
             for i in 0..BYTE_SIZE {
                 let val: AB::Expr = AB::F::from_canonical_u32(1 << i).into();
                 c_byte_sum = c_byte_sum.clone() + val * local.c_least_sig_byte[i];
@@ -356,7 +371,7 @@ where
 
             // The 3-bit number represented by the 3 least significant bits of c equals the number
             // of bits to shift.
-            let mut num_bits_to_shift = AB::Expr::ZERO;
+            let mut num_bits_to_shift = AB::Expr::zero();
             for i in 0..3 {
                 num_bits_to_shift = num_bits_to_shift.clone()
                     + local.c_least_sig_byte[i] * AB::F::from_canonical_u32(1 << i);
@@ -427,7 +442,7 @@ where
 
             // The 3-bit number represented by the 3 least significant bits of c equals the number
             // of bits to shift.
-            let mut num_bits_to_shift = AB::Expr::ZERO;
+            let mut num_bits_to_shift = AB::Expr::zero();
             for i in 0..3 {
                 num_bits_to_shift = num_bits_to_shift.clone()
                     + local.c_least_sig_byte[i] * AB::F::from_canonical_u32(1 << i);
@@ -494,35 +509,29 @@ where
             }
         }
 
-        // Check that the operation flags are boolean.
-        builder.assert_bool(local.is_srl);
-        builder.assert_bool(local.is_sra);
-        builder.assert_bool(local.is_ror);
-        builder.assert_bool(local.is_real);
-
-        // Check that is_real is the sum of the two operation flags.
+        // Check that is_real is the sum of the operation flags.
         builder.assert_eq(local.is_srl + local.is_sra + local.is_ror, local.is_real);
 
         // Receive the arguments.
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc,
-            AB::Expr::ZERO,
+            local.next_pc + AB::Expr::from_canonical_u32(4),
+            AB::Expr::zero(),
             local.is_srl * AB::F::from_canonical_u32(Opcode::SRL as u32)
                 + local.is_sra * AB::F::from_canonical_u32(Opcode::SRA as u32)
                 + local.is_ror * AB::F::from_canonical_u32(Opcode::ROR as u32),
             local.a,
             local.b,
             local.c,
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ONE,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::one(),
             local.is_real,
         );
     }
@@ -546,7 +555,7 @@ mod tests {
         shard.shift_right_events = vec![AluEvent::new(0, Opcode::SRL, 6, 12, 1)];
         let chip = ShiftRightChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         println!("{:?}", trace.values)
     }
 
@@ -600,7 +609,7 @@ mod tests {
         shard.shift_right_events = shift_events;
         let chip = ShiftRightChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         let proof = prove::<KoalaBearPoseidon2, _>(&config, &chip, &mut challenger, trace);
 
         let mut challenger = config.challenger();

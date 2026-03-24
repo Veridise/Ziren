@@ -125,7 +125,7 @@ pub(crate) fn load_plonk_proof_from_bytes(
     let h1 = uncompressed_bytes_to_g1_point(&buffer[256..320])?;
     let h2 = uncompressed_bytes_to_g1_point(&buffer[320..384])?;
 
-    // Stores l_at_zeta, r_at_zeta, o_at_zeta, s 1_at_zeta, s2_at_zeta, bsb22_commitments
+    // Stores l_at_zeta, r_at_zeta, o_at_zeta, s1_at_zeta, s2_at_zeta, bsb22_commitments
     let mut claimed_values = Vec::with_capacity(5 + num_bsb22_commitments);
     let mut offset = 384;
     for _ in 1..6 {
@@ -173,9 +173,9 @@ pub(crate) fn load_plonk_proof_from_bytes(
     Ok(result)
 }
 
-pub(crate) fn g1_to_bytes(g1: &AffineG1) -> Result<Vec<u8>, PlonkError> {
+pub(crate) fn g1_to_bytes(g1: &AffineG1) -> Result<[u8; 64], PlonkError> {
     let mut bytes: [u8; 64] = unsafe { core::mem::transmute(*g1) };
     bytes[..32].reverse();
     bytes[32..].reverse();
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }

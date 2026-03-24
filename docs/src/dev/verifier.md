@@ -11,10 +11,14 @@ For zkVMs, both the proving and verifying keys are generated from the compiled E
 
 Verification then checks that the proof, verifying key, inputs, and outputs are consistent. If the verification function `V(vk, x, y, π)` evaluates to true, the proof is accepted; otherwise, it is rejected.
 
-The verifying key is produced during the key generation phase, alongside the proving key used by the prover. A 32-byte verifying key hash serves as a unique identifier, binding the proof to a specific compiled guest program and preventing it from being validated under another program’s key. You can retrieve a program’s verifying key with:
+The verifying key is produced during the key generation phase, alongside the proving key used by the prover. A 32-byte verifying key hash serves as a unique identifier, binding the proof to a specific compiled guest program and preventing it from being validated under another program’s key. Retrieve a program’s verifying key hash in code using the SDK:
 
-```bash
-cargo run --release --bin vkey
+```rust
+use zkm_sdk::ProverClient;
+
+let client = ProverClient::new();
+let (_pk, vk) = client.setup(ELF);
+let vkey_hash = vk.bytes32(); // 32-byte program verifying key hash
 ```
 
 ## On-chain verification
@@ -222,7 +226,7 @@ When deployed, the verifier logic is placed on Ethereum at a specific contract a
 
 The deployed contract points to the correct verifier implementation (e.g., `ZKMVerifierGroth16`), and users interact with it by calling the `verifyProof()` function.
 
-The prof lifecycle for EVM-based verification is as follows:
+The proof lifecycle for EVM-based verification is as follows:
 
 1. After proof generation, the proof bytes, verifying key, and public values are submitted in a transaction to the deployed verifier contract (e.g., `ZKMVerifierGroth16`).
 2. Full nodes execute the verifier contract, checking that the proof matches the verifying key, that the public values are consistent, and that all cryptographic constraints of the proof system hold.
@@ -370,7 +374,7 @@ This example logs:
 - Verification time (in ms)
 - Whether the proof is valid
 
-The `eth_wasm` example demonstrates **in-browser STARK verification for Ethereum block proofs** as part of the [EthProofs](https://ethproofs.org/?utm_source=chatgpt.com) initiatve. 
+The `eth_wasm` example demonstrates **in-browser STARK verification for Ethereum block proofs** as part of the [EthProofs](https://ethproofs.org/?utm_source=chatgpt.com) initiate. 
 
 main.js: 
 

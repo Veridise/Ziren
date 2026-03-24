@@ -9,7 +9,7 @@ use zkm_stark::{koala_bear_poseidon2::KoalaBearPoseidon2, StarkVerifyingKey};
 
 use crate::{
     events::MemoryRecord,
-    memory::PagedMemory,
+    memory::Memory,
     record::{ExecutionRecord, MemoryAccessRecord},
     syscalls::SyscallCode,
     ExecutorMode, ZKMReduceProof,
@@ -36,18 +36,22 @@ pub struct ExecutionState {
 
     /// The memory which instructions operate over. Values contain the memory value and last shard
     /// + timestamp that each memory address was accessed.
-    pub memory: PagedMemory<MemoryRecord>,
+    pub memory: Memory<MemoryRecord>,
 
     /// The global clock keeps track of how many instructions have been executed through all shards.
     pub global_clk: u64,
 
-    /// The clock increments by 4 (possibly more in syscalls) for each instruction that has been
+    /// The clock increments by 5 (possibly more in syscalls) for each instruction that has been
     /// executed in this shard.
     pub clk: u32,
 
+    /// Max clocks for each record.
+    pub records_clk: Vec<u32>,
+    pub records_clk_index: u32,
+
     /// Uninitialized memory addresses that have a specific value they should be initialized with.
     /// `SyscallHintRead` uses this to write hint data into uninitialized memory.
-    pub uninitialized_memory: PagedMemory<u32>,
+    pub uninitialized_memory: Memory<u32>,
 
     /// A stream of input values (global to the entire program).
     pub input_stream: Vec<Vec<u8>>,
@@ -81,12 +85,14 @@ impl ExecutionState {
             // Start at shard 1 since shard 0 is reserved for memory initialization.
             current_shard: 1,
             clk: 0,
+            records_clk: vec![],
+            records_clk_index: 0,
             pc: pc_start,
             next_pc,
             exited: false,
             next_is_delayslot: false,
-            memory: PagedMemory::new_preallocated(),
-            uninitialized_memory: PagedMemory::default(),
+            memory: Memory::new_preallocated(),
+            uninitialized_memory: Memory::new_preallocated(),
             input_stream: Vec::new(),
             input_stream_ptr: 0,
             public_values_stream: Vec::new(),

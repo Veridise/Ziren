@@ -10,6 +10,7 @@ use zkm_curves::{
 use crate::{
     events::{Fp2MulEvent, PrecompileEvent},
     syscalls::{Syscall, SyscallCode, SyscallContext},
+    ExecutionError,
 };
 
 pub struct Fp2MulSyscall<P> {
@@ -29,7 +30,7 @@ impl<P: FpOpField> Syscall for Fp2MulSyscall<P> {
         syscall_code: SyscallCode,
         arg1: u32,
         arg2: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let clk = rt.clk;
         let x_ptr = arg1;
         if !x_ptr.is_multiple_of(4) {
@@ -55,12 +56,18 @@ impl<P: FpOpField> Syscall for Fp2MulSyscall<P> {
         let bc1 = &BigUint::from_slice(bc1);
         let modulus = &BigUint::from_bytes_le(P::MODULUS);
 
+        // Pre-compute products to avoid redundant BigUint multiplications
+        let ac0_bc0 = (ac0 * bc0) % modulus;
+        let ac1_bc1 = (ac1 * bc1) % modulus;
+        let ac0_bc1 = (ac0 * bc1) % modulus;
+        let ac1_bc0 = (ac1 * bc0) % modulus;
+
         #[allow(clippy::match_bool)]
-        let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
-            true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,
-            false => ((ac0 * bc0) % modulus - (ac1 * bc1) % modulus) % modulus,
+        let c0 = match ac0_bc0 < ac1_bc1 {
+            true => ((modulus + &ac0_bc0) - &ac1_bc1) % modulus,
+            false => (&ac0_bc0 - &ac1_bc1) % modulus,
         };
-        let c1 = ((ac0 * bc1) % modulus + (ac1 * bc0) % modulus) % modulus;
+        let c1 = (&ac0_bc1 + &ac1_bc0) % modulus;
 
         let mut result = c0.to_u32_digits();
         result.resize(num_words / 2, 0);
@@ -95,7 +102,7 @@ impl<P: FpOpField> Syscall for Fp2MulSyscall<P> {
                 PrecompileEvent::Bls12381Fp2Mul(event),
             ),
         };
-        None
+        Ok(None)
     }
 
     fn num_extra_cycles(&self) -> u32 {

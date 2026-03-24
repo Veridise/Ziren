@@ -10,7 +10,7 @@ use crate::{
     air::{LookupScope, MachineAir, MultiTableAirBuilder, ZKMAirBuilder},
     local_permutation_trace_width,
     lookup::{Lookup, LookupBuilder, LookupKind},
-    scoped_lookups,
+    scoped_lookups, PicusInfo,
 };
 
 use super::{eval_permutation_constraints, generate_permutation_trace, PROOF_MAX_NUM_PVS};
@@ -61,7 +61,7 @@ where
     F: Field,
     A: BaseAir<F>,
 {
-    /// Records the lookups and constraint degree from the air and crates a new chip.
+    /// Records the lookups and constraint degree from the air and creates a new chip.
     pub fn new(air: A) -> Self
     where
         A: MachineAir<F> + Air<LookupBuilder<F>> + Air<SymbolicAirBuilder<F>>,
@@ -198,6 +198,8 @@ where
 
     type Program = A::Program;
 
+    type Error = A::Error;
+
     fn name(&self) -> String {
         self.air.name()
     }
@@ -206,16 +208,32 @@ where
         <A as MachineAir<F>>::preprocessed_width(&self.air)
     }
 
+    fn preprocessed_num_rows(&self, program: &Self::Program, instrs_len: usize) -> Option<usize> {
+        <A as MachineAir<F>>::preprocessed_num_rows(&self.air, program, instrs_len)
+    }
+
     fn generate_preprocessed_trace(&self, program: &A::Program) -> Option<RowMajorMatrix<F>> {
         <A as MachineAir<F>>::generate_preprocessed_trace(&self.air, program)
     }
 
-    fn generate_trace(&self, input: &A::Record, output: &mut A::Record) -> RowMajorMatrix<F> {
+    fn num_rows(&self, input: &A::Record) -> Option<usize> {
+        <A as MachineAir<F>>::num_rows(&self.air, input)
+    }
+
+    fn generate_trace(
+        &self,
+        input: &A::Record,
+        output: &mut A::Record,
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         self.air.generate_trace(input, output)
     }
 
-    fn generate_dependencies(&self, input: &A::Record, output: &mut A::Record) {
-        self.air.generate_dependencies(input, output);
+    fn generate_dependencies(
+        &self,
+        input: &A::Record,
+        output: &mut A::Record,
+    ) -> Result<(), Self::Error> {
+        self.air.generate_dependencies(input, output)
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -228,6 +246,10 @@ where
 
     fn local_only(&self) -> bool {
         self.air.local_only()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        self.air.picus_info()
     }
 }
 

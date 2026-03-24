@@ -121,7 +121,7 @@ pub trait MemoryAirBuilder: BaseAirBuilder {
         // `current_comp_val, prev_comp_val` are range-checked to be `<2^24` and as long as we're
         // working in a field larger than `2 * 2^24` (which is true of the KoalaBear and Mersenne31
         // prime).
-        let diff_minus_one = current_comp_val - prev_comp_value - Self::Expr::ONE;
+        let diff_minus_one = current_comp_val - prev_comp_value - Self::Expr::one();
 
         // Verify that mem_access.ts_diff = mem_access.ts_diff_16bit_limb
         // + mem_access.ts_diff_8bit_limb * 2^16.
@@ -137,7 +137,7 @@ pub trait MemoryAirBuilder: BaseAirBuilder {
     ///
     /// This method verifies that the inputted is less than 2^24 by doing a 16 bit and 8 bit range
     /// check on it's limbs.  It will also verify that the limbs are correct.  This method is needed
-    /// since the memory access timestamp check (see [Self::verify_mem_access_ts]) needs to assume
+    /// since the memory access timestamp check (see [Self::eval_memory_access_timestamp]) needs to assume
     /// the clk is within 24 bits.
     fn eval_range_check_24bits(
         &mut self,
@@ -157,15 +157,15 @@ pub trait MemoryAirBuilder: BaseAirBuilder {
         self.send_byte(
             Self::Expr::from_canonical_u8(ByteOpcode::U16Range as u8),
             limb_16,
-            Self::Expr::ZERO,
-            Self::Expr::ZERO,
+            Self::Expr::zero(),
+            Self::Expr::zero(),
             do_check.clone(),
         );
 
         self.send_byte(
             Self::Expr::from_canonical_u8(ByteOpcode::U8Range as u8),
-            Self::Expr::ZERO,
-            Self::Expr::ZERO,
+            Self::Expr::zero(),
+            Self::Expr::zero(),
             limb_8,
             do_check,
         )

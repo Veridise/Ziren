@@ -1,4 +1,4 @@
-use zkm_core_executor::{ExecutionReport, HookEnv, ZKMContextBuilder};
+use zkm_core_executor::{ExecutionError, ExecutionReport, HookEnv, ZKMContextBuilder};
 use zkm_core_machine::io::ZKMStdin;
 use zkm_primitives::io::ZKMPublicValues;
 use zkm_prover::{components::DefaultProverComponents, ZKMProvingKey};
@@ -15,7 +15,7 @@ pub struct Execute<'a> {
     prover: &'a dyn Prover<DefaultProverComponents>,
     context_builder: ZKMContextBuilder<'a>,
     elf: &'a [u8],
-    stdin: ZKMStdin,
+    stdin: &'a ZKMStdin,
 }
 
 impl<'a> Execute<'a> {
@@ -26,7 +26,7 @@ impl<'a> Execute<'a> {
     pub fn new(
         prover: &'a dyn Prover<DefaultProverComponents>,
         elf: &'a [u8],
-        stdin: ZKMStdin,
+        stdin: &'a ZKMStdin,
     ) -> Self {
         Self { prover, elf, stdin, context_builder: Default::default() }
     }
@@ -35,7 +35,7 @@ impl<'a> Execute<'a> {
     pub fn run(self) -> Result<(ZKMPublicValues, ExecutionReport)> {
         let Self { prover, elf, stdin, mut context_builder } = self;
         let context = context_builder.build();
-        Ok(prover.zkm_prover().execute(elf, &stdin, context)?)
+        Ok(prover.zkm_prover().execute(elf, stdin, context)?)
     }
 
     /// Add a runtime [Hook](super::Hook) into the context.
@@ -46,7 +46,7 @@ impl<'a> Execute<'a> {
     pub fn with_hook(
         mut self,
         fd: u32,
-        f: impl FnMut(HookEnv, &[u8]) -> Vec<Vec<u8>> + Send + Sync + 'a,
+        f: impl FnMut(HookEnv, &[u8]) -> Result<Vec<Vec<u8>>, ExecutionError> + Send + Sync + 'a,
     ) -> Self {
         self.context_builder.hook(fd, f);
         self
@@ -67,12 +67,6 @@ impl<'a> Execute<'a> {
     /// [`zkm_core_executor::ExecutionError::ExceededCycleLimit`].
     pub fn max_cycles(mut self, max_cycles: u64) -> Self {
         self.context_builder.max_cycles(max_cycles);
-        self
-    }
-
-    /// Skip deferred proof verification.
-    pub fn set_skip_deferred_proof_verification(mut self, value: bool) -> Self {
-        self.context_builder.set_skip_deferred_proof_verification(value);
         self
     }
 }
@@ -158,6 +152,12 @@ impl<'a> Prove<'a> {
         self
     }
 
+    // Set the proof mode to the dv-snark bn254 mode.
+    pub fn dvsnark(mut self) -> Self {
+        self.kind = ZKMProofKind::DvSnark;
+        self
+    }
+
     /// Set the proof mode to the compressed-proof-to-groth16 mode.
     pub fn compress_to_groth16(mut self) -> Self {
         self.kind = ZKMProofKind::CompressToGroth16;
@@ -172,7 +172,7 @@ impl<'a> Prove<'a> {
     pub fn with_hook(
         mut self,
         fd: u32,
-        f: impl FnMut(HookEnv, &[u8]) -> Vec<Vec<u8>> + Send + Sync + 'a,
+        f: impl FnMut(HookEnv, &[u8]) -> Result<Vec<Vec<u8>>, ExecutionError> + Send + Sync + 'a,
     ) -> Self {
         self.context_builder.hook(fd, f);
         self
@@ -219,12 +219,6 @@ impl<'a> Prove<'a> {
     /// This parameter is only used when the prover is run in network mode.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
-        self
-    }
-
-    /// Set the skip deferred proof verification flag.
-    pub fn set_skip_deferred_proof_verification(mut self, value: bool) -> Self {
-        self.context_builder.set_skip_deferred_proof_verification(value);
         self
     }
 }

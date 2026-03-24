@@ -10,9 +10,9 @@ pub mod install;
 pub use crate::network::prover::NetworkProver;
 use cfg_if::cfg_if;
 use std::env;
-// #[cfg(feature = "cuda")]
-// pub use crate::provers::CudaProver;
+use zkm_cuda::ZKMGpuServer;
 
+#[cfg(feature = "network")]
 pub mod network;
 pub mod proof;
 pub mod provers;
@@ -22,7 +22,7 @@ pub use proof::*;
 pub use provers::ZKMVerificationError;
 use zkm_prover::components::DefaultProverComponents;
 
-#[cfg(feature = "network")]
+//#[cfg(feature = "network")]
 pub use provers::{CpuProver, MockProver, Prover};
 
 pub use zkm_build::include_elf;
@@ -35,7 +35,11 @@ pub use zkm_prover::{
 };
 
 // Re-export the utilities.
+#[cfg(feature = "network")]
 use crate::utils::block_on;
+
+use crate::provers::CudaProver;
+
 pub use utils::setup_logger;
 
 /// A client for interacting with Ziren.
@@ -65,16 +69,16 @@ impl ProverClient {
         #[allow(unreachable_code)]
         match env::var("ZKM_PROVER").unwrap_or("local".to_string()).to_lowercase().as_str() {
             "mock" => Self { prover: Box::new(MockProver::new()) },
-            "local" => {
+            "cpu" | "local" => {
                 #[cfg(debug_assertions)]
                 eprintln!("Warning: Local prover in dev mode is not recommended. Proof generation may be slow.");
                 Self {
-                    #[cfg(not(feature = "cuda"))]
                     prover: Box::new(CpuProver::new()),
-                    #[cfg(feature = "cuda")]
-                    prover: Box::new(CudaProver::new(ZKMProver::new())),
                 }
             }
+            "cuda" => Self {
+                prover: Box::new(CudaProver::new(ZKMProver::new(), ZKMGpuServer::default()))
+            },
             "network" => {
                 cfg_if! {
                    if #[cfg(feature = "network")] {
@@ -146,9 +150,8 @@ impl ProverClient {
     ///
     /// let client = ProverClient::cuda();
     /// ```
-    #[cfg(feature = "cuda")]
     pub fn cuda() -> Self {
-        Self { prover: Box::new(CudaProver::new(ZKMProver::new())) }
+        Self { prover: Box::new(CudaProver::new(ZKMProver::new(), ZKMGpuServer::default())) }
     }
 
     /// Creates a new [ProverClient] with the network prover.
@@ -196,9 +199,9 @@ impl ProverClient {
     /// stdin.write(&10usize);
     ///
     /// // Execute the program on the inputs.
-    /// let (public_values, report) = client.execute(elf, stdin).run().unwrap();
+    /// let (public_values, report) = client.execute(elf, &stdin).run().unwrap();
     /// ```
-    pub fn execute<'a>(&'a self, elf: &'a [u8], stdin: ZKMStdin) -> action::Execute<'a> {
+    pub fn execute<'a>(&'a self, elf: &'a [u8], stdin: &'a ZKMStdin) -> action::Execute<'a> {
         action::Execute::new(self.prover.as_ref(), elf, stdin)
     }
 
@@ -330,15 +333,7 @@ impl ProverClientBuilder {
     pub fn build(self) -> ProverClient {
         match self.mode.expect("The prover mode is required") {
             ProverMode::Cpu => ProverClient::cpu(),
-            // ProverMode::Cuda => {
-            //     cfg_if! {
-            //         if #[cfg(feature = "cuda")] {
-            //             ProverClient::cuda()
-            //         } else {
-            //             panic!("cuda feature is not enabled")
-            //         }
-            //     }
-            // }
+            ProverMode::Cuda => ProverClient::cuda(),
             ProverMode::Network => {
                 cfg_if! {
                    if #[cfg(feature = "network")] {
@@ -351,7 +346,6 @@ impl ProverClientBuilder {
                 }
             }
             ProverMode::Mock => ProverClient::mock(),
-            _ => unimplemented!("other provers not supported for now"),
         }
     }
 }
@@ -384,22 +378,6 @@ impl NetworkProverBuilder {
         self.skip_simulation = true;
         self
     }
-
-    // /// Creates a new [NetworkProverV1].
-    // #[cfg(feature = "network")]
-    // pub fn build(self) -> NetworkProverV1 {
-    //     let private_key = self.private_key.expect("The private key is required");
-
-    //     NetworkProverV1::new(&private_key, self.rpc_url, self.skip_simulation)
-    // }
-
-    /// Creates a new [NetworkProverV2].
-    #[cfg(feature = "network-v2")]
-    pub fn build_v2(self) -> NetworkProverV2 {
-        let private_key = self.private_key.expect("The private key is required");
-
-        NetworkProverV2::new(&private_key, self.rpc_url, self.skip_simulation)
-    }
 }
 
 #[cfg(test)]
@@ -419,7 +397,7 @@ mod tests {
         let elf = test_artifacts::FIBONACCI_ELF;
         let mut stdin = ZKMStdin::new();
         stdin.write(&10usize);
-        let (_, _report) = client.execute(elf, stdin).run().unwrap();
+        let (_, _report) = client.execute(elf, &stdin).run().unwrap();
         // tracing::info!("gas = {}", report.estimate_gas());
     }
 
@@ -431,7 +409,7 @@ mod tests {
         let elf = test_artifacts::PANIC_ELF;
         let mut stdin = ZKMStdin::new();
         stdin.write(&10usize);
-        client.execute(elf, stdin).run().unwrap();
+        client.execute(elf, &stdin).run().unwrap();
     }
 
     #[should_panic]
@@ -442,7 +420,7 @@ mod tests {
         let elf = test_artifacts::PANIC_ELF;
         let mut stdin = ZKMStdin::new();
         stdin.write(&10usize);
-        client.execute(elf, stdin).max_cycles(1).run().unwrap();
+        client.execute(elf, &stdin).max_cycles(1).run().unwrap();
     }
 
     #[test]
@@ -516,6 +494,20 @@ mod tests {
         // Generate proof & verify.
         let proof = client.prove(&pk, stdin).groth16().run().unwrap();
         client.verify(&proof, &vk).unwrap();
+    }
+
+    #[test]
+    fn test_generate_dvsnark_r1cs_witness() {
+        utils::setup_logger();
+        let client = ProverClient::cpu();
+        let elf = test_artifacts::FIBONACCI_ELF;
+        let (pk, _vk) = client.setup(elf);
+        let mut stdin = ZKMStdin::new();
+        stdin.write(&10usize);
+
+        // Generate proof.
+        let proof = client.prove(&pk, stdin).dvsnark().run().unwrap();
+        tracing::info!("proof public values {:?}", proof.public_values);
     }
 
     #[test]

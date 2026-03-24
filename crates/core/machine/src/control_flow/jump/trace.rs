@@ -9,9 +9,12 @@ use zkm_core_executor::{
     events::{ByteLookupEvent, ByteRecord, JumpEvent},
     ExecutionRecord, Opcode, Program,
 };
-use zkm_stark::{air::MachineAir, Word};
+use zkm_stark::{air::MachineAir, PicusInfo, Word};
 
-use crate::utils::{next_power_of_two, zeroed_f_vec};
+use crate::{
+    utils::{next_power_of_two, zeroed_f_vec},
+    CoreChipError,
+};
 
 use super::{JumpChip, JumpColumns, NUM_JUMP_COLS};
 
@@ -20,15 +23,21 @@ impl<F: PrimeField32> MachineAir<F> for JumpChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "Jump".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        JumpColumns::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         output: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         let chunk_size = std::cmp::max((input.jump_events.len()) / num_cpus::get(), 1);
         let nb_rows = input.jump_events.len();
         let size_log2 = input.fixed_log2_rows::<F, _>(self);
@@ -57,7 +66,7 @@ impl<F: PrimeField32> MachineAir<F> for JumpChip {
         output.add_byte_lookup_events_from_maps(blu_events.iter().collect_vec());
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(values, NUM_JUMP_COLS)
+        Ok(RowMajorMatrix::new(values, NUM_JUMP_COLS))
     }
 
     fn included(&self, shard: &Self::Record) -> bool {

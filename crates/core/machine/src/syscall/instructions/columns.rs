@@ -41,9 +41,6 @@ pub struct SyscallInstrColumns<T> {
     /// The access columns for prev value of the first operand.
     pub prev_a_value: Word<T>,
 
-    /// Whether the current syscall is SYS_NOP
-    pub is_sys_nop: IsZeroOperation<T>,
-
     /// Whether the current syscall is ENTER_UNCONSTRAINED.
     pub is_enter_unconstrained: IsZeroOperation<T>,
 
@@ -66,10 +63,10 @@ pub struct SyscallInstrColumns<T> {
     /// should be set to 1 and everything else set to 0.
     pub index_bitmap: [T; PV_DIGEST_NUM_WORDS],
 
-    /// Columns to babybear range check the halt/commit_deferred_proofs operand.
+    /// Columns to koalabear range check the halt/commit_deferred_proofs operand.
     pub operand_range_check_cols: KoalaBearWordRangeChecker<T>,
 
-    /// The operand value to babybear range check.
+    /// The operand value to koalabear range check.
     pub operand_to_check: Word<T>,
 
     /// The result of is_real * (is_halt || is_commit_deferred_proofs)

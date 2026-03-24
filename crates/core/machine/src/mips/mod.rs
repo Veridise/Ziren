@@ -1,3 +1,4 @@
+use crate::syscall::precompiles::boolean_circuit_garble::BooleanCircuitGarbleChip;
 use crate::{
     global::GlobalChip,
     memory::{MemoryChipType, MemoryLocalChip, NUM_LOCAL_MEMORY_ENTRIES_PER_ROW},
@@ -18,7 +19,7 @@ use zkm_core_executor::{
 };
 use zkm_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField};
 use zkm_stark::{
-    air::{LookupScope, MachineAir, ZKM_PROOF_NUM_PV_ELTS},
+    air::{LookupScope, MachineAir, PicusInfo, ZKM_PROOF_NUM_PV_ELTS},
     Chip, LookupKind, StarkGenericConfig, StarkMachine,
 };
 
@@ -33,7 +34,7 @@ pub(crate) mod mips_chips {
         control_flow::{BranchChip, JumpChip},
         cpu::CpuChip,
         memory::{MemoryGlobalChip, MemoryInstructionsChip},
-        misc::MiscInstrsChip,
+        misc::{MiscInstrsChip, MovCondChip},
         program::ProgramChip,
         syscall::{
             chip::SyscallChip,
@@ -103,6 +104,8 @@ pub enum MipsAir<F: PrimeField32> {
     Jump(JumpChip),
     /// An AIR for MIPS memory instructions.
     MemoryInstrs(MemoryInstructionsChip),
+    /// An AIR for MIPS mov condition instructions.
+    MovCond(MovCondChip),
     /// An AIR for MIPS misc instructions.
     MiscInstrs(MiscInstrsChip),
     /// An AIR for MIPS syscall instructions.
@@ -141,6 +144,8 @@ pub enum MipsAir<F: PrimeField32> {
     Secp256r1Double(WeierstrassDoubleAssignChip<SwCurve<Secp256r1Parameters>>),
     /// A precompile for the Poseidon2 permutation
     Poseidon2Permute(Poseidon2PermuteChip),
+    /// A precompile for the Boolean Circuit Garble
+    BooleanCircuitGarble(BooleanCircuitGarbleChip),
     /// A precompile for the Keccak Sponge
     KeccakSponge(KeccakSpongeChip),
     /// A precompile for addition on the Elliptic curve bn254.
@@ -430,6 +435,15 @@ impl<F: PrimeField32> MipsAir<F> {
         costs.insert(sys_linux.name(), sys_linux.cost());
         chips.push(sys_linux);
 
+        let movcond_instrs = Chip::new(MipsAir::MovCond(MovCondChip::default()));
+        costs.insert(movcond_instrs.name(), movcond_instrs.cost());
+        chips.push(movcond_instrs);
+
+        let boolean_circuit_garble =
+            Chip::new(MipsAir::<F>::BooleanCircuitGarble(BooleanCircuitGarbleChip::default()));
+        costs.insert(boolean_circuit_garble.name(), boolean_circuit_garble.cost());
+        chips.push(boolean_circuit_garble);
+
         (chips, costs)
     }
 
@@ -444,11 +458,12 @@ impl<F: PrimeField32> MipsAir<F> {
             (MipsAirId::Cpu, record.cpu_events.len()),
             (MipsAirId::Branch, record.branch_events.len()),
             (MipsAirId::Jump, record.jump_events.len()),
+            (MipsAirId::MovCond, record.movcond_events.len()),
             (MipsAirId::MiscInstrs, record.misc_events.len()),
             (MipsAirId::MemoryInstrs, record.memory_instr_events.len()),
             (MipsAirId::SyscallInstrs, record.syscall_events.len()),
             (MipsAirId::DivRem, record.divrem_events.len()),
-            (MipsAirId::AddSub, record.add_events.len() + record.sub_events.len()),
+            (MipsAirId::AddSub, record.add_sub_events.len()),
             (MipsAirId::Bitwise, record.bitwise_events.len()),
             (MipsAirId::Mul, record.mul_events.len()),
             (MipsAirId::ShiftRight, record.shift_right_events.len()),
@@ -482,6 +497,7 @@ impl<F: PrimeField32> MipsAir<F> {
             .map(|events| {
                 let events_len = match self {
                     Self::KeccakSponge(_) => self.keccak_permutation_in_record(record),
+                    Self::BooleanCircuitGarble(_) => self.boolean_circuit_garble_in_record(record),
                     _ => events.len(),
                 };
                 let num_rows = events_len * self.rows_per_event();
@@ -520,6 +536,7 @@ impl<F: PrimeField32> MipsAir<F> {
             MipsAir::Jump(JumpChip::default()),
             MipsAir::SyscallInstrs(SyscallInstrsChip::default()),
             MipsAir::MemoryInstrs(MemoryInstructionsChip::default()),
+            MipsAir::MovCond(MovCondChip::default()),
             MipsAir::MiscInstrs(MiscInstrsChip::default()),
             MipsAir::MemoryLocal(MemoryLocalChip::new()),
             MipsAir::Global(GlobalChip),
@@ -597,6 +614,25 @@ impl<F: PrimeField32> MipsAir<F> {
             .unwrap_or(0)
     }
 
+    fn boolean_circuit_garble_in_record(&self, record: &ExecutionRecord) -> usize {
+        record
+            .precompile_events
+            .get_events(SyscallCode::BOOLEAN_CIRCUIT_GARBLE)
+            .map(|events| {
+                events
+                    .iter()
+                    .map(|(_, pre_e)| {
+                        if let PrecompileEvent::BooleanCircuitGarble(event) = pre_e {
+                            event.num_gates() + 1
+                        } else {
+                            unreachable!()
+                        }
+                    })
+                    .sum::<usize>()
+            })
+            .unwrap_or(0)
+    }
+
     pub(crate) fn syscall_code(&self) -> SyscallCode {
         match self {
             Self::Bls12381Add(_) => SyscallCode::BLS12381_ADD,
@@ -623,6 +659,7 @@ impl<F: PrimeField32> MipsAir<F> {
             Self::Bls12381Fp2Mul(_) => SyscallCode::BLS12381_FP2_MUL,
             Self::Bls12381Fp2AddSub(_) => SyscallCode::BLS12381_FP2_ADD,
             Self::Poseidon2Permute(_) => SyscallCode::POSEIDON2_PERMUTE,
+            Self::BooleanCircuitGarble(_) => SyscallCode::BOOLEAN_CIRCUIT_GARBLE,
             Self::KeccakSponge(_) => SyscallCode::KECCAK_SPONGE,
             Self::SysLinux(_) => SyscallCode::SYS_LINUX,
             Self::Add(_) => unreachable!("Invalid for core chip"),
@@ -648,6 +685,7 @@ impl<F: PrimeField32> MipsAir<F> {
             Self::SyscallInstrs(_) => unreachable!("Invalid for core chip"),
             Self::MemoryInstrs(_) => unreachable!("Invalid for core chip"),
             Self::MiscInstrs(_) => unreachable!("Invalid for core chip"),
+            Self::MovCond(_) => unreachable!("Invalid for core chip"),
         }
     }
 }
@@ -677,8 +715,8 @@ impl<F: PrimeField32> core::hash::Hash for MipsAir<F> {
 pub mod tests {
     use crate::programs::tests::other_memory_program;
     use crate::programs::tests::{
-        fibonacci_program, hello_world_program, sha3_chain_program, simple_memory_program,
-        simple_program, ssz_withdrawals_program, unconstrained_program,
+        fibonacci_program, hello_world_program, max_memory_program, sha3_chain_program,
+        simple_memory_program, simple_program, ssz_withdrawals_program, unconstrained_program,
     };
     use crate::{
         io::ZKMStdin,
@@ -1055,6 +1093,13 @@ pub mod tests {
     fn test_fibonacci_prove_simple() {
         setup_logger();
         let program = fibonacci_program();
+        run_test::<CpuProver<_, _>>(program).unwrap();
+    }
+
+    #[test]
+    fn test_max_memory_prove_simple() {
+        setup_logger();
+        let program = max_memory_program();
         run_test::<CpuProver<_, _>>(program).unwrap();
     }
 

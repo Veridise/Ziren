@@ -1,7 +1,7 @@
 use crate::{
     events::{LinuxEvent, PrecompileEvent},
     syscalls::{Syscall, SyscallCode, SyscallContext},
-    Register,
+    ExecutionError, Register,
 };
 
 pub(crate) struct SysBrkSyscall;
@@ -17,11 +17,11 @@ impl Syscall for SysBrkSyscall {
         syscall_code: SyscallCode,
         a0: u32,
         a1: u32,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, ExecutionError> {
         let start_clk = rt.clk;
-        let (record, brk) = rt.mr(Register::BRK as u32);
+        let (record, brk) = rt.rr_traced(Register::BRK);
         let v0 = if a0 > brk { a0 } else { brk };
-        let a3_record = rt.mw(Register::A3 as u32, 0);
+        let a3_record = rt.rw_traced(Register::A3, 0);
         let shard = rt.current_shard();
         let event = PrecompileEvent::Linux(LinuxEvent {
             shard,
@@ -37,6 +37,6 @@ impl Syscall for SysBrkSyscall {
         let syscall_event =
             rt.rt.syscall_event(start_clk, None, rt.next_pc, syscall_code.syscall_id(), a0, a1);
         rt.add_precompile_event(SyscallCode::SYS_LINUX, syscall_event, event);
-        Some(v0)
+        Ok(Some(v0))
     }
 }

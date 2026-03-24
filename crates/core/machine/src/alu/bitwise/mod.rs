@@ -13,13 +13,13 @@ use zkm_core_executor::{
     events::{AluEvent, ByteLookupEvent, ByteRecord},
     ByteOpcode, ExecutionRecord, Opcode, Program,
 };
-use zkm_derive::AlignedBorrow;
+use zkm_derive::{AlignedBorrow, PicusAnnotations};
 use zkm_stark::{
-    air::{MachineAir, ZKMAirBuilder},
+    air::{MachineAir, PicusInfo, ZKMAirBuilder},
     Word,
 };
 
-use crate::utils::pad_rows_fixed;
+use crate::{utils::pad_rows_fixed, CoreChipError};
 
 /// The number of main trace columns for `BitwiseChip`.
 pub const NUM_BITWISE_COLS: usize = size_of::<BitwiseCols<u8>>();
@@ -29,7 +29,7 @@ pub const NUM_BITWISE_COLS: usize = size_of::<BitwiseCols<u8>>();
 pub struct BitwiseChip;
 
 /// The column layout for the chip.
-#[derive(AlignedBorrow, Default, Clone, Copy)]
+#[derive(AlignedBorrow, PicusAnnotations, Default, Clone, Copy)]
 #[repr(C)]
 pub struct BitwiseCols<T> {
     /// The current/next pc, used for instruction lookup table.
@@ -46,15 +46,19 @@ pub struct BitwiseCols<T> {
     pub c: Word<T>,
 
     /// If the opcode is NOR.
+    #[picus(selector)]
     pub is_nor: T,
 
     /// If the opcode is XOR.
+    #[picus(selector)]
     pub is_xor: T,
 
     // If the opcode is OR.
+    #[picus(selector)]
     pub is_or: T,
 
     /// If the opcode is AND.
+    #[picus(selector)]
     pub is_and: T,
 }
 
@@ -63,15 +67,21 @@ impl<F: PrimeField32> MachineAir<F> for BitwiseChip {
 
     type Program = Program;
 
+    type Error = CoreChipError;
+
     fn name(&self) -> String {
         "Bitwise".to_string()
+    }
+
+    fn picus_info(&self) -> PicusInfo {
+        BitwiseCols::<u8>::picus_info()
     }
 
     fn generate_trace(
         &self,
         input: &ExecutionRecord,
         _: &mut ExecutionRecord,
-    ) -> RowMajorMatrix<F> {
+    ) -> Result<RowMajorMatrix<F>, Self::Error> {
         let mut rows = input
             .bitwise_events
             .par_iter()
@@ -92,10 +102,14 @@ impl<F: PrimeField32> MachineAir<F> for BitwiseChip {
         );
 
         // Convert the trace to a row major matrix.
-        RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_BITWISE_COLS)
+        Ok(RowMajorMatrix::new(rows.into_iter().flatten().collect::<Vec<_>>(), NUM_BITWISE_COLS))
     }
 
-    fn generate_dependencies(&self, input: &Self::Record, output: &mut Self::Record) {
+    fn generate_dependencies(
+        &self,
+        input: &Self::Record,
+        output: &mut Self::Record,
+    ) -> Result<(), Self::Error> {
         let chunk_size = std::cmp::max(input.bitwise_events.len() / num_cpus::get(), 1);
 
         let blu_batches = input
@@ -113,6 +127,7 @@ impl<F: PrimeField32> MachineAir<F> for BitwiseChip {
             .collect::<Vec<_>>();
 
         output.add_byte_lookup_events_from_maps(blu_batches.iter().collect_vec());
+        Ok(())
     }
 
     fn included(&self, shard: &Self::Record) -> bool {
@@ -199,22 +214,22 @@ where
 
         // Receive the instruction.
         builder.receive_instruction(
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
+            AB::Expr::zero(),
+            AB::Expr::zero(),
             local.pc,
             local.next_pc,
-            AB::Expr::ZERO,
+            local.next_pc + AB::Expr::from_canonical_u32(4),
+            AB::Expr::zero(),
             cpu_opcode,
             local.a,
             local.b,
             local.c,
-            Word([AB::Expr::ZERO; 4]),
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ZERO,
-            AB::Expr::ONE,
+            Word([AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero(), AB::Expr::zero()]),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::zero(),
+            AB::Expr::one(),
             local.is_xor + local.is_or + local.is_and + local.is_nor,
         );
 
@@ -222,7 +237,7 @@ where
         builder.assert_bool(local.is_xor);
         builder.assert_bool(local.is_or);
         builder.assert_bool(local.is_and);
-        builder.assert_bool(local.is_xor);
+        builder.assert_bool(local.is_nor);
         builder.assert_bool(is_real);
     }
 }
@@ -251,7 +266,7 @@ mod tests {
         ];
         let chip = BitwiseChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         println!("{:?}", trace.values)
     }
 
@@ -270,7 +285,7 @@ mod tests {
         .repeat(1000);
         let chip = BitwiseChip::default();
         let trace: RowMajorMatrix<KoalaBear> =
-            chip.generate_trace(&shard, &mut ExecutionRecord::default());
+            chip.generate_trace(&shard, &mut ExecutionRecord::default()).unwrap();
         let proof =
             uni_stark_prove::<KoalaBearPoseidon2, _>(&config, &chip, &mut challenger, trace);
 

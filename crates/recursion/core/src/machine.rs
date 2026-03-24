@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign};
 use hashbrown::HashMap;
 use p3_field::{extension::BinomiallyExtendable, PrimeField32};
 use zkm_stark::{
-    air::{LookupScope, MachineAir},
+    air::{LookupScope, MachineAir, PicusInfo},
     shape::OrderedShape,
     Chip, StarkGenericConfig, StarkMachine, PROOF_MAX_NUM_PVS,
 };
@@ -34,6 +34,7 @@ use crate::{
 #[execution_record_path = "crate::ExecutionRecord<F>"]
 #[program_path = "crate::RecursionProgram<F>"]
 #[builder_path = "crate::builder::ZKMRecursionAirBuilder<F = F>"]
+#[error_path = "crate::RecursionChipError"]
 #[eval_trait_bound = "AB::Var: 'static"]
 pub enum RecursionAir<F: PrimeField32 + BinomiallyExtendable<D>, const DEGREE: usize> {
     MemoryConst(MemoryConstChip<F>),
@@ -266,7 +267,7 @@ pub mod tests {
 
     use std::{iter::once, sync::Arc};
 
-    use machine::RecursionAir;
+    use crate::machine::RecursionAir;
     use p3_field::{
         extension::{BinomialExtensionField, HasFrobenius},
         Field, FieldAlgebra, FieldExtensionAlgebra,
@@ -276,8 +277,13 @@ pub mod tests {
     use zkm_core_machine::utils::run_test_machine;
     use zkm_stark::{koala_bear_poseidon2::KoalaBearPoseidon2, StarkGenericConfig};
 
-    // TODO expand glob import
-    use crate::{runtime::instruction as instr, *};
+    use crate::{
+        runtime::{
+            instruction as instr, BaseAluOpcode, ExtAluOpcode, Instruction, RecursionProgram,
+            Runtime,
+        },
+        MemAccessKind, D,
+    };
 
     type SC = KoalaBearPoseidon2;
     type F = <SC as StarkGenericConfig>::Val;
